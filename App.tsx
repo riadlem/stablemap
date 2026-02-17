@@ -293,11 +293,13 @@ const App: React.FC = () => {
 
   const handleImportCompanies = async (names: string[]) => {
       const existingIds = new Set(companies.map(c => c.id));
+      const existingNames = new Set(companies.map(c => generateCompanyId(c.name)));
       const validNewNames: string[] = [];
       names.forEach(name => {
           const id = generateCompanyId(name);
-          if (!existingIds.has(id)) {
+          if (!existingIds.has(id) && !existingNames.has(id)) {
               existingIds.add(id);
+              existingNames.add(id);
               validNewNames.push(name.trim());
           }
       });
@@ -317,7 +319,11 @@ const App: React.FC = () => {
           region: 'Global',
           focus: 'Crypto-Second'
       }));
-      setCompanies(prev => [...skeletons, ...prev]);
+      setCompanies(prev => {
+          const updated = [...skeletons, ...prev];
+          db.saveCompanies(updated).catch(console.error);
+          return updated;
+      });
       for (const skel of skeletons) {
           try {
               const enriched = await enrichCompanyData(skel.name);
