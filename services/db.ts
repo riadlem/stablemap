@@ -1,5 +1,5 @@
 
-import { Company, NewsItem, CompanyFocus, Global500ResearchData } from '../types';
+import { Company, NewsItem, CompanyFocus, Global500ResearchData, CompanyList as CompanyListType } from '../types';
 import { MOCK_COMPANIES, MOCK_NEWS } from '../constants';
 import { dbInstance, isConfigured } from './firebase';
 import { 
@@ -19,14 +19,16 @@ const COLLECTIONS = {
   COMPANIES: 'companies',
   NEWS: 'news',
   SYSTEM: 'system',
-  GLOBAL500: 'global500_activity'
+  GLOBAL500: 'global500_activity',
+  LISTS: 'company_lists'
 };
 
 const LS_KEYS = {
   COMPANIES: 'stablemap_companies',
   NEWS: 'stablemap_news',
   SCAN: 'stablemap_lastscan',
-  GLOBAL500: 'stablemap_global500'
+  GLOBAL500: 'stablemap_global500',
+  LISTS: 'stablemap_lists'
 };
 
 // --- HELPERS ---
@@ -433,5 +435,88 @@ export const db = {
     }
 
     return dataMap;
+  },
+
+  /**
+   * Get all saved company lists
+   */
+  async getLists(): Promise<CompanyListType[]> {
+    let lists: CompanyListType[] = [];
+
+    if (!isOfflineMode && dbInstance) {
+      try {
+        const listsCollection = collection(dbInstance, COLLECTIONS.LISTS);
+        const snapshot = await withTimeout<QuerySnapshot<DocumentData>>(getDocs(listsCollection), 3000);
+        if (!snapshot.empty) {
+          lists = snapshot.docs.map(d => {
+            const raw = d.data();
+            const normalized = normalizeDates(raw);
+            return { ...normalized, id: d.id, entries: Array.isArray(normalized.entries) ? normalized.entries : [] } as CompanyListType;
+          });
+          return lists;
+        }
+      } catch (e: any) {
+        console.warn("[DB] Error fetching lists from Firestore:", e.message);
+        isOfflineMode = true;
+      }
+    }
+
+    try {
+      const stored = localStorage.getItem(LS_KEYS.LISTS);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) lists = parsed;
+      }
+    } catch (e) { /* ignore */ }
+
+    return lists;
+  },
+
+  /**
+   * Save a single company list (upsert)
+   */
+  async saveList(list: CompanyListType): Promise<void> {
+    if (!isOfflineMode && dbInstance) {
+      try {
+        const docRef = doc(dbInstance, COLLECTIONS.LISTS, list.id);
+        await withTimeout(setDoc(docRef, sanitizeForFirestore(list), { merge: true }), 3000);
+      } catch (e: any) {
+        console.error("[DB] Error saving list:", e.message);
+        isOfflineMode = true;
+      }
+    }
+
+    try {
+      const stored = localStorage.getItem(LS_KEYS.LISTS);
+      const existing: CompanyListType[] = stored ? JSON.parse(stored) : [];
+      const idx = existing.findIndex(l => l.id === list.id);
+      if (idx >= 0) existing[idx] = list; else existing.push(list);
+      localStorage.setItem(LS_KEYS.LISTS, JSON.stringify(existing));
+    } catch (e) { console.error("[DB] LS error saveList", e); }
+  },
+
+  /**
+   * Delete a company list
+   */
+  async deleteList(listId: string): Promise<void> {
+    if (!isOfflineMode && dbInstance) {
+      try {
+        const docRef = doc(dbInstance, COLLECTIONS.LISTS, listId);
+        await withTimeout(deleteDoc(docRef), 2000);
+      } catch (e: any) {
+        console.error("[DB] Error deleting list:", e.message);
+        isOfflineMode = true;
+      }
+    }
+
+    try {
+      const stored = localStorage.getItem(LS_KEYS.LISTS);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          localStorage.setItem(LS_KEYS.LISTS, JSON.stringify(parsed.filter((l: CompanyListType) => l.id !== listId)));
+        }
+      }
+    } catch (e) { console.error("[DB] LS error deleteList", e); }
   }
 };
