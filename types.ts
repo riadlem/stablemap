@@ -107,6 +107,23 @@ export interface Global500ResearchData {
   lastUpdated: number;
 }
 
+export type ListPriority = 'Critical' | 'High' | 'Medium' | 'Low';
+
+export interface CompanyListEntry {
+  companyId: string;
+  label: string;
+  priority: ListPriority;
+  addedAt: string;
+}
+
+export interface CompanyList {
+  id: string;
+  name: string;
+  entries: CompanyListEntry[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface FortuneGlobal500Company {
   rank: number;
   name: string;
