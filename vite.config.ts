@@ -11,7 +11,7 @@ export default defineConfig(({ mode }) => {
         // Proxy /api/claude to a local Express server during dev (see dev-server.js)
         // In production on Vercel, /api/claude is handled by the serverless function natively
         proxy: {
-          '/api/claude': {
+          '/api': {
             target: 'http://localhost:3001',
             changeOrigin: true,
           }
