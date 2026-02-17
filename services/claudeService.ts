@@ -126,7 +126,7 @@ const parseJSON = (text: string): any => {
 
 // --- URL CONTENT FETCHER (via /api/fetch-url) ---
 
-const fetchUrlContent = async (
+export const fetchUrlContent = async (
   url: string
 ): Promise<{ title: string; content: string } | null> => {
   const start = Date.now();
@@ -545,5 +545,44 @@ RETURN ONLY RAW JSON ARRAY.`;
   } catch (error) {
     console.error('recommendMissingCompanies failed:', error);
     return [];
+  }
+};
+
+export const analyzeNewsForCompanies = async (
+  content: string,
+  companyNames: string[]
+): Promise<{ mentionedCompanies: string[]; summary: string }> => {
+  const truncated = content.length > 8000 ? content.substring(0, 8000) + '\n[truncated]' : content;
+  const prompt = `Analyze this article and identify which of the following companies are mentioned or directly relevant.
+
+COMPANIES TO CHECK:
+${companyNames.join(', ')}
+
+ARTICLE CONTENT:
+${truncated}
+
+Return a JSON object with:
+- "mentionedCompanies": string[] (exact company names from the list above that are mentioned or directly relevant in the article — only include names from the provided list)
+- "summary": string (1-2 sentence summary of the article)
+
+RETURN ONLY RAW JSON.`;
+
+  try {
+    return await executeWithRetry('analyzeNewsForCompanies', async () => {
+      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.2);
+      const json = parseJSON(text);
+      if (!json || typeof json !== 'object') {
+        return { mentionedCompanies: [], summary: '' };
+      }
+      return {
+        mentionedCompanies: Array.isArray(json.mentionedCompanies)
+          ? json.mentionedCompanies.filter((n: any) => typeof n === 'string' && companyNames.includes(n))
+          : [],
+        summary: typeof json.summary === 'string' ? json.summary : '',
+      };
+    });
+  } catch (error) {
+    console.error('analyzeNewsForCompanies failed:', error);
+    return { mentionedCompanies: [], summary: '' };
   }
 };

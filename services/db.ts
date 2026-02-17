@@ -512,6 +512,48 @@ export const db = {
   },
 
   /**
+   * Delete multiple companies by ID (batch)
+   */
+  async deleteCompanies(ids: string[]): Promise<void> {
+    if (ids.length === 0) return;
+
+    // --- FIREBASE MODE ---
+    if (!checkOffline()) {
+      try {
+        const BATCH_SIZE = 400;
+        for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+          const chunk = ids.slice(i, i + BATCH_SIZE);
+          const batch = writeBatch(dbInstance);
+          chunk.forEach(id => {
+            const docRef = doc(dbInstance, COLLECTIONS.COMPANIES, id);
+            batch.delete(docRef);
+          });
+          await withTimeout(batch.commit(), 8000);
+        }
+        console.log(`[DB] Deleted ${ids.length} companies from Firestore.`);
+      } catch (error: any) {
+        console.error("[DB] Error batch-deleting companies from Firestore:", error.message);
+        goOffline();
+      }
+    }
+
+    // --- LOCAL STORAGE MODE ---
+    try {
+      const stored = localStorage.getItem(LS_KEYS.COMPANIES);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          const idSet = new Set(ids);
+          const updated = parsed.filter((c: Company) => !idSet.has(c.id));
+          localStorage.setItem(LS_KEYS.COMPANIES, JSON.stringify(updated));
+        }
+      }
+    } catch (e) {
+      console.error("[DB] Error batch-deleting from local storage:", e);
+    }
+  },
+
+  /**
    * Delete a company list
    */
   async deleteList(listId: string): Promise<void> {
