@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { Company, Job, Partner, CompanyFocus, NewsItem } from '../types';
-import { ArrowLeft, Briefcase, Handshake, ExternalLink, Share2, Sparkles, Building, MapPin, Building2, Globe, RefreshCw, Trash2, Edit2, Check, X, Newspaper, Plus, Flag, Ban, DollarSign, TrendingUp, Users } from 'lucide-react';
+import { ArrowLeft, Briefcase, Handshake, ExternalLink, Share2, Sparkles, Building, MapPin, Building2, Globe, RefreshCw, Trash2, Edit2, Check, X, Newspaper, Plus, Flag, Ban, DollarSign, TrendingUp, Users, UserPlus } from 'lucide-react';
 import { findJobOpenings } from "../services/claudeService";
 import { isJobRecent } from '../constants';
 import AddNewsModal from './AddNewsModal';
@@ -16,7 +16,17 @@ interface CompanyDetailProps {
   onDelete: (id: string) => Promise<void>;
   onEditName: (id: string, newName: string) => Promise<void>;
   onAddNews: (companyName: string, news: { title: string; url: string; date: string; summary: string }) => Promise<void>;
+  allCompanyIds?: Set<string>;
+  onAddCompanyToDirectory?: (name: string) => void;
 }
+
+const generateCompanyId = (name: string) => {
+  const cleanName = name
+    .replace(/[,.]/g, '')
+    .replace(/\s+(Inc|LLC|Ltd|Limited|Corp|Corporation|Group|Holdings|PLC|SA|AG|GmbH)$/i, '')
+    .trim();
+  return `c-${cleanName.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
+};
 
 const DetailFocusBadge: React.FC<{ focus: CompanyFocus }> = ({ focus }) => {
     if (focus === 'Crypto-First') {
@@ -33,7 +43,7 @@ const DetailFocusBadge: React.FC<{ focus: CompanyFocus }> = ({ focus }) => {
     );
 };
 
-const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare, onUpdateCompany, onRefresh, onDelete, onEditName, onAddNews }) => {
+const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare, onUpdateCompany, onRefresh, onDelete, onEditName, onAddNews, allCompanyIds, onAddCompanyToDirectory }) => {
   const [activeTab, setActiveTab] = useState<'overview' | 'jobs' | 'news'>('overview');
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -49,6 +59,9 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
   // Job Interaction State
   const [flaggingJobId, setFlaggingJobId] = useState<string | null>(null);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
+
+  // Partner add-to-directory state
+  const [addingPartner, setAddingPartner] = useState<string | null>(null);
 
   // Combine fetched news (from company.recentNews) if available
   const displayNews = useMemo(() => {
@@ -351,16 +364,34 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
                 <p className="text-xs text-slate-500 italic">No partnerships tracked.</p>
               ) : (
                 <ul className="space-y-3">
-                  {enterprisePartners.map((p, idx) => (
-                    <li key={idx} className="bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
-                      <div className="flex justify-between items-start">
-                        <div className="font-semibold text-slate-900 text-sm">{p.name}</div>
-                        {p.type === 'Fortune500USA' && <span className="text-[9px] text-slate-400 font-bold uppercase">USA</span>}
-                        {p.type === 'Fortune500Global' && <span className="text-[9px] text-slate-400 font-bold uppercase">Global</span>}
-                      </div>
-                      <div className="text-xs text-slate-600 mt-1">{p.description}</div>
-                    </li>
-                  ))}
+                  {enterprisePartners.map((p, idx) => {
+                    const inDirectory = allCompanyIds?.has(generateCompanyId(p.name));
+                    return (
+                      <li key={idx} className="bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
+                        <div className="flex justify-between items-start">
+                          <div className="font-semibold text-slate-900 text-sm">{p.name}</div>
+                          <div className="flex items-center gap-2">
+                            {p.type === 'Fortune500USA' && <span className="text-[9px] text-slate-400 font-bold uppercase">USA</span>}
+                            {p.type === 'Fortune500Global' && <span className="text-[9px] text-slate-400 font-bold uppercase">Global</span>}
+                            {allCompanyIds && onAddCompanyToDirectory && (
+                              inDirectory ? (
+                                <span className="text-[9px] text-emerald-500 font-bold flex items-center gap-0.5"><Check size={10} /> In Directory</span>
+                              ) : (
+                                <button
+                                  onClick={() => { setAddingPartner(p.name); onAddCompanyToDirectory(p.name); }}
+                                  disabled={addingPartner === p.name}
+                                  className="text-[9px] text-indigo-600 hover:text-indigo-800 font-bold flex items-center gap-0.5 disabled:opacity-50"
+                                >
+                                  <UserPlus size={10} /> {addingPartner === p.name ? 'Adding...' : 'Add'}
+                                </button>
+                              )
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-xs text-slate-600 mt-1">{p.description}</div>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </div>
@@ -374,12 +405,30 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
                 <p className="text-xs text-slate-500 italic">No partnerships tracked.</p>
               ) : (
                 <ul className="space-y-3">
-                  {cryptoPartners.map((p, idx) => (
-                    <li key={idx} className="bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
-                      <div className="font-semibold text-slate-900 text-sm">{p.name}</div>
-                      <div className="text-xs text-slate-600 mt-1">{p.description}</div>
-                    </li>
-                  ))}
+                  {cryptoPartners.map((p, idx) => {
+                    const inDirectory = allCompanyIds?.has(generateCompanyId(p.name));
+                    return (
+                      <li key={idx} className="bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
+                        <div className="flex justify-between items-start">
+                          <div className="font-semibold text-slate-900 text-sm">{p.name}</div>
+                          {allCompanyIds && onAddCompanyToDirectory && (
+                            inDirectory ? (
+                              <span className="text-[9px] text-emerald-500 font-bold flex items-center gap-0.5"><Check size={10} /> In Directory</span>
+                            ) : (
+                              <button
+                                onClick={() => { setAddingPartner(p.name); onAddCompanyToDirectory(p.name); }}
+                                disabled={addingPartner === p.name}
+                                className="text-[9px] text-indigo-600 hover:text-indigo-800 font-bold flex items-center gap-0.5 disabled:opacity-50"
+                              >
+                                <UserPlus size={10} /> {addingPartner === p.name ? 'Adding...' : 'Add'}
+                              </button>
+                            )
+                          )}
+                        </div>
+                        <div className="text-xs text-slate-600 mt-1">{p.description}</div>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </div>

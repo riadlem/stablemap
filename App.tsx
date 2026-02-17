@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
-import { 
-  Building2, 
-  Newspaper, 
+import {
+  Building2,
+  Newspaper,
   Menu,
   RefreshCw,
   Clock,
@@ -12,7 +12,8 @@ import {
   AlertTriangle,
   Zap,
   ScrollText,
-  ListChecks
+  ListChecks,
+  GitMerge
 } from 'lucide-react';
 import CompanyList from './components/CompanyList';
 import CompanyDetail from './components/CompanyDetail';
@@ -23,7 +24,7 @@ import Logs from './components/Logs';
 import CompanyLists from './components/CompanyLists';
 import ShareModal from './components/ShareModal';
 import { Company, Partner, NewsItem, Category } from './types';
-import { enrichCompanyData, scanForNewPartnerships, recommendMissingCompanies, getCurrentModelName } from "./services/claudeService";
+import { enrichCompanyData, scanForNewPartnerships, recommendMissingCompanies, getCurrentModelName, fetchUrlContent, analyzeNewsForCompanies } from "./services/claudeService";
 import { db } from './services/db';
 
 enum View {
@@ -162,24 +163,48 @@ const App: React.FC = () => {
   };
 
   const handleManualNewsAdd = async (companyName: string, news: { title: string; url: string; date: string; summary: string }) => {
-      const newItem: NewsItem = {
-          id: `manual-news-${Date.now()}`,
-          title: news.title,
-          url: news.url,
-          date: news.date,
-          summary: news.summary,
-          source: 'Manual Entry',
-          relatedCompanies: [companyName]
-      };
       try {
-          await db.saveNews([newItem]);
-          const targetCompany = companies.find(c => c.name === companyName);
-          if (targetCompany) {
-              const currentNews = targetCompany.recentNews || [];
-              if (!currentNews.some(n => n.title === newItem.title)) {
-                  await handleSingleCompanyUpdate({ ...targetCompany, recentNews: [newItem, ...currentNews] });
+          // Auto-fetch title + content from URL if title not provided
+          const urlData = news.url ? await fetchUrlContent(news.url).catch(() => null) : null;
+          const title = news.title || urlData?.title || (news.url ? new URL(news.url).hostname : 'Untitled');
+
+          // Analyze article content for mentioned companies
+          const allCompanyNames = companies.map(c => c.name);
+          let mentionedNames: string[] = [companyName];
+          let autoSummary = news.summary;
+
+          if (urlData?.content) {
+              const analysis = await analyzeNewsForCompanies(urlData.content, allCompanyNames).catch(() => null);
+              if (analysis) {
+                  mentionedNames = [...new Set([companyName, ...analysis.mentionedCompanies])];
+                  if (!autoSummary && analysis.summary) autoSummary = analysis.summary;
               }
           }
+
+          const newItem: NewsItem = {
+              id: `manual-news-${Date.now()}`,
+              title,
+              url: news.url,
+              date: news.date,
+              summary: autoSummary,
+              source: 'Manual Entry',
+              relatedCompanies: mentionedNames
+          };
+
+          await db.saveNews([newItem]);
+
+          // Update recentNews on all matching companies
+          setCompanies(current => {
+              const updated = current.map(c => {
+                  const isMatch = mentionedNames.some(n => generateCompanyId(n) === c.id || c.name === n);
+                  if (!isMatch) return c;
+                  const existing = c.recentNews || [];
+                  if (existing.some(n => n.id === newItem.id)) return c;
+                  return { ...c, recentNews: [newItem, ...existing] };
+              });
+              db.saveCompanies(updated).catch(console.error);
+              return updated;
+          });
       } catch (e) { console.error("Failed to save news", e); }
   };
 
@@ -343,6 +368,83 @@ const App: React.FC = () => {
       }
   };
 
+  const handleMergeDuplicates = async (): Promise<{ merged: number; removed: number }> => {
+      const dataScore = (c: Company): number => {
+          let score = 0;
+          if (c.description && c.description.length > 30) score += 2;
+          if (c.website) score += 1;
+          if (c.headquarters && c.headquarters !== 'Pending...') score += 1;
+          if (c.partners && c.partners.length > 0) score += c.partners.length;
+          if (c.recentNews && c.recentNews.length > 0) score += c.recentNews.length;
+          if (c.jobs && c.jobs.length > 0) score += c.jobs.length;
+          if (c.categories && c.categories.length > 0) score += 1;
+          if (c.funding) score += 2;
+          return score;
+      };
+
+      const groups = new Map<string, Company[]>();
+      companies.forEach(c => {
+          const key = generateCompanyId(c.name);
+          if (!groups.has(key)) groups.set(key, []);
+          groups.get(key)!.push(c);
+      });
+
+      const toKeep: Company[] = [];
+      const toRemove: string[] = [];
+      let mergedCount = 0;
+
+      groups.forEach((group, canonicalId) => {
+          if (group.length === 1) {
+              // Even singletons: ensure canonical ID
+              if (group[0].id !== canonicalId) {
+                  toRemove.push(group[0].id);
+                  toKeep.push({ ...group[0], id: canonicalId });
+              } else {
+                  toKeep.push(group[0]);
+              }
+              return;
+          }
+          mergedCount++;
+          const best = group.reduce((a, b) => dataScore(a) >= dataScore(b) ? a : b);
+          // Deduplicate partners by lowercase name
+          const seenPartners = new Set<string>();
+          const allPartners = group.flatMap(c => c.partners || []).filter(p => {
+              const key = p.name.toLowerCase();
+              if (seenPartners.has(key)) return false;
+              seenPartners.add(key);
+              return true;
+          });
+          // Deduplicate news/jobs by id
+          const seenNews = new Set<string>();
+          const allNews = group.flatMap(c => c.recentNews || []).filter(n => {
+              if (seenNews.has(n.id)) return false;
+              seenNews.add(n.id);
+              return true;
+          });
+          const seenJobs = new Set<string>();
+          const allJobs = group.flatMap(c => c.jobs || []).filter(j => {
+              if (seenJobs.has(j.id)) return false;
+              seenJobs.add(j.id);
+              return true;
+          });
+
+          const merged: Company = {
+              ...best,
+              id: canonicalId,
+              partners: allPartners,
+              recentNews: allNews,
+              jobs: allJobs,
+          };
+          toKeep.push(merged);
+          group.forEach(c => { if (c.id !== canonicalId) toRemove.push(c.id); });
+      });
+
+      setCompanies(toKeep);
+      await db.saveCompanies(toKeep);
+      if (toRemove.length > 0) await db.deleteCompanies(toRemove);
+      return { merged: mergedCount, removed: toRemove.length };
+  };
+
   const handleRefreshCompany = async (company: Company) => {
       try {
           const enriched = await enrichCompanyData(company.name);
@@ -366,10 +468,10 @@ const App: React.FC = () => {
         </div>
     );
     if (selectedCompany) return (
-        <CompanyDetail company={selectedCompany} onBack={() => setSelectedCompany(null)} onShare={handleShare} onUpdateCompany={handleSingleCompanyUpdate} onRefresh={handleRefreshCompany} onDelete={handleDeleteCompany} onEditName={handleEditCompanyName} onAddNews={handleManualNewsAdd} />
+        <CompanyDetail company={selectedCompany} onBack={() => setSelectedCompany(null)} onShare={handleShare} onUpdateCompany={handleSingleCompanyUpdate} onRefresh={handleRefreshCompany} onDelete={handleDeleteCompany} onEditName={handleEditCompanyName} onAddNews={handleManualNewsAdd} allCompanyIds={new Set(companies.map(c => c.id))} onAddCompanyToDirectory={handleAddCompany} />
     );
     switch (currentView) {
-      case View.DIRECTORY: return <CompanyList companies={companies} onSelectCompany={setSelectedCompany} onAddCompany={handleAddCompany} onImportCompanies={handleImportCompanies} isAdding={addingCompany} onRefreshPending={handleRefreshPending} isRefreshingPending={isRefreshingPending} onScanRecommendations={handleScanRecommendations} />;
+      case View.DIRECTORY: return <CompanyList companies={companies} onSelectCompany={setSelectedCompany} onAddCompany={handleAddCompany} onImportCompanies={handleImportCompanies} isAdding={addingCompany} onRefreshPending={handleRefreshPending} isRefreshingPending={isRefreshingPending} onScanRecommendations={handleScanRecommendations} onMergeDuplicates={handleMergeDuplicates} />;
       case View.PARTNERSHIPS_GLOBAL: return <GlobalPartnershipMatrix companies={companies} />;
       case View.INTELLIGENCE: return <Intelligence directoryCompanies={companies.map(c => c.name)} />;
       case View.JOBS: return <JobBoard companies={companies} onUpdateCompanies={handleCompaniesUpdate} />;

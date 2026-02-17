@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useRef } from 'react';
 import { Company, Category, CompanyFocus } from '../types';
-import { Building2, Globe, ArrowRight, Tag, MapPin, Search, Sparkles, Upload, FileText, Filter, Plus, X, ScanSearch, Check, LayoutGrid, List, RefreshCcw } from 'lucide-react';
+import { Building2, Globe, ArrowRight, Tag, MapPin, Search, Sparkles, Upload, FileText, Filter, Plus, X, ScanSearch, Check, LayoutGrid, List, RefreshCcw, GitMerge } from 'lucide-react';
 
 interface Recommendation {
     name: string;
@@ -17,6 +17,7 @@ interface CompanyListProps {
   onRefreshPending: () => Promise<void>;
   isRefreshingPending: boolean;
   onScanRecommendations: () => Promise<Recommendation[]>;
+  onMergeDuplicates: () => Promise<{ merged: number; removed: number }>;
 }
 
 const FocusBadge: React.FC<{ focus: CompanyFocus }> = ({ focus }) => {
@@ -34,7 +35,7 @@ const FocusBadge: React.FC<{ focus: CompanyFocus }> = ({ focus }) => {
   );
 };
 
-const CompanyList: React.FC<CompanyListProps> = ({ companies, onSelectCompany, onAddCompany, onImportCompanies, isAdding, onRefreshPending, isRefreshingPending, onScanRecommendations }) => {
+const CompanyList: React.FC<CompanyListProps> = ({ companies, onSelectCompany, onAddCompany, onImportCompanies, isAdding, onRefreshPending, isRefreshingPending, onScanRecommendations, onMergeDuplicates }) => {
   const [filter, setFilter] = useState<Category | 'All'>('All');
   const [regionFilter, setRegionFilter] = useState<string>('All');
   const [focusFilter, setFocusFilter] = useState<CompanyFocus | 'All'>('All');
@@ -46,6 +47,10 @@ const CompanyList: React.FC<CompanyListProps> = ({ companies, onSelectCompany, o
   // Recommendation State
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
   const [isScanning, setIsScanning] = useState(false);
+
+  // Merge Duplicates State
+  const [isMerging, setIsMerging] = useState(false);
+  const [mergeResult, setMergeResult] = useState<string | null>(null);
 
   // Extract unique regions
   const regions = ['All', ...Array.from(new Set(companies.map(c => c.region || 'Global').filter(Boolean)))];
@@ -169,11 +174,37 @@ const CompanyList: React.FC<CompanyListProps> = ({ companies, onSelectCompany, o
             {isRefreshingPending ? 'Refreshing...' : 'Refresh Pending'}
           </button>
 
-          <button 
+          <button
             onClick={() => fileInputRef.current?.click()}
             className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 text-slate-600 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors shadow-sm whitespace-nowrap"
           >
             <Upload size={16} /> Import CSV
+          </button>
+
+          <button
+            onClick={async () => {
+              setIsMerging(true);
+              setMergeResult(null);
+              try {
+                const result = await onMergeDuplicates();
+                if (result.merged === 0) {
+                  setMergeResult('No duplicates found.');
+                } else {
+                  setMergeResult(`Merged ${result.merged} group${result.merged > 1 ? 's' : ''}, removed ${result.removed} duplicate${result.removed > 1 ? 's' : ''}.`);
+                }
+              } catch (e) {
+                setMergeResult('Merge failed. Please try again.');
+              } finally {
+                setIsMerging(false);
+                setTimeout(() => setMergeResult(null), 5000);
+              }
+            }}
+            disabled={isMerging}
+            className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 text-slate-600 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors shadow-sm whitespace-nowrap disabled:opacity-50"
+            title="Find and merge duplicate company records"
+          >
+            <GitMerge size={16} className={isMerging ? "animate-spin" : ""} />
+            {isMerging ? 'Merging...' : 'Merge Duplicates'}
           </button>
 
           <button 
@@ -204,6 +235,13 @@ const CompanyList: React.FC<CompanyListProps> = ({ companies, onSelectCompany, o
           </form>
         </div>
       </div>
+
+      {/* Merge Result */}
+      {mergeResult && (
+        <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-3 text-sm text-emerald-800 font-medium flex items-center gap-2 animate-in fade-in duration-200">
+          <GitMerge size={16} /> {mergeResult}
+        </div>
+      )}
 
       {/* Recommendations Section */}
       {recommendations.length > 0 && (
