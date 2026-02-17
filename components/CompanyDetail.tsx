@@ -153,9 +153,8 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
   };
 
   // Filter partners by type - Merged Enterprise
-  const enterprisePartners = company.partners.filter(p => 
-    p.type === 'Fortune500USA' || 
-    p.type === 'Fortune500Global' || 
+  const enterprisePartners = company.partners.filter(p =>
+    p.type === 'Fortune500Global' ||
     p.type === 'Fortune500' as any
   );
   const cryptoPartners = company.partners.filter(p => p.type === 'CryptoNative');
@@ -381,7 +380,6 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
                         <div className="flex justify-between items-start">
                           <div className="font-semibold text-slate-900 text-sm">{p.name}</div>
                           <div className="flex items-center gap-2">
-                            {p.type === 'Fortune500USA' && <span className="text-[9px] text-slate-400 font-bold uppercase">USA</span>}
                             {p.type === 'Fortune500Global' && <span className="text-[9px] text-slate-400 font-bold uppercase">Global</span>}
                             {allCompanyIds && onAddCompanyToDirectory && (
                               inDirectory ? (

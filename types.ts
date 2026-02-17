@@ -13,7 +13,7 @@ export type CompanyFocus = 'Crypto-First' | 'Crypto-Second';
 
 export interface Partner {
   name: string;
-  type: 'Fortune500USA' | 'Fortune500Global' | 'CryptoNative';
+  type: 'Fortune500Global' | 'CryptoNative';
   description: string;
   date?: string; // Date of announcement
   sourceUrl?: string; // Link to press release
