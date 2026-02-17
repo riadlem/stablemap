@@ -1,0 +1,548 @@
+
+import React, { useState, useMemo } from 'react';
+import { Company, Job, Partner, CompanyFocus, NewsItem } from '../types';
+import { ArrowLeft, Briefcase, Handshake, ExternalLink, Share2, Sparkles, Building, MapPin, Building2, Globe, RefreshCw, Trash2, Edit2, Check, X, Newspaper, Plus, Flag, Ban, DollarSign, TrendingUp, Users } from 'lucide-react';
+import { findJobOpenings } from "../services/claudeService";
+import { isJobRecent } from '../constants';
+import AddNewsModal from './AddNewsModal';
+import JobDetailModal from './JobDetailModal';
+
+interface CompanyDetailProps {
+  company: Company;
+  onBack: () => void;
+  onShare: (c: Company) => void;
+  onUpdateCompany: (c: Company) => Promise<void>;
+  onRefresh: (c: Company) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
+  onEditName: (id: string, newName: string) => Promise<void>;
+  onAddNews: (companyName: string, news: { title: string; url: string; date: string; summary: string }) => Promise<void>;
+}
+
+const DetailFocusBadge: React.FC<{ focus: CompanyFocus }> = ({ focus }) => {
+    if (focus === 'Crypto-First') {
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-violet-100 px-3 py-1 text-xs font-bold text-violet-700 border border-violet-200">
+          <Sparkles size={12} className="fill-violet-700" /> Crypto-First
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600 border border-slate-200">
+        <Building2 size={12} /> Crypto-Second
+      </span>
+    );
+};
+
+const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare, onUpdateCompany, onRefresh, onDelete, onEditName, onAddNews }) => {
+  const [activeTab, setActiveTab] = useState<'overview' | 'jobs' | 'news'>('overview');
+  const [loadingJobs, setLoadingJobs] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [jobs, setJobs] = useState<Job[]>(company.jobs?.filter(j => isJobRecent(j.postedDate) && !j.hidden) || []);
+  const [jobsLoaded, setJobsLoaded] = useState(!!company.jobs && company.jobs.length > 0);
+  
+  // Edit State
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [tempName, setTempName] = useState(company.name);
+  const [isAddNewsOpen, setIsAddNewsOpen] = useState(false);
+  
+  // Job Interaction State
+  const [flaggingJobId, setFlaggingJobId] = useState<string | null>(null);
+  const [selectedJob, setSelectedJob] = useState<Job | null>(null);
+
+  // Combine fetched news (from company.recentNews) if available
+  const displayNews = useMemo(() => {
+      // Sort news if available
+      return (company.recentNews || []).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [company.recentNews]);
+
+  const fetchJobs = async () => {
+    setLoadingJobs(true);
+    try {
+      const foundJobs = await findJobOpenings(company.name);
+      
+      // Merge with existing jobs to preserve manual entries and deduplicate
+      const existingJobs = company.jobs || [];
+      const mergedJobs = [...existingJobs];
+      
+      foundJobs.forEach(job => {
+        const exists = mergedJobs.some(e => 
+            (e.url && job.url && e.url === job.url) || 
+            (e.title.toLowerCase() === job.title.toLowerCase() && e.postedDate === job.postedDate)
+        );
+        if (!exists) {
+            mergedJobs.push(job);
+        }
+      });
+      
+      // Clean up old jobs during update, but keep hidden ones in data (just don't show)
+      const validJobs = mergedJobs.filter(j => isJobRecent(j.postedDate));
+
+      setJobs(validJobs.filter(j => !j.hidden));
+      setJobsLoaded(true);
+      
+      // Update global state with merged jobs
+      const updatedCompany = { ...company, jobs: validJobs };
+      await onUpdateCompany(updatedCompany);
+    } catch (e) {
+      console.error("Failed to fetch jobs", e);
+    }
+    setLoadingJobs(false);
+  };
+
+  const handleDismissJob = async (jobId: string, reason: string) => {
+      const updatedJobs = (company.jobs || []).map(j => {
+          if (j.id === jobId) {
+              return { ...j, hidden: true, dismissReason: reason };
+          }
+          return j;
+      });
+
+      // Update local visible state
+      setJobs(updatedJobs.filter(j => !j.hidden && isJobRecent(j.postedDate)));
+      
+      // Update persistent state
+      const updatedCompany = { ...company, jobs: updatedJobs };
+      await onUpdateCompany(updatedCompany);
+      setFlaggingJobId(null);
+  };
+
+  const handleRefreshClick = async () => {
+      setIsRefreshing(true);
+      try {
+          await onRefresh(company);
+      } catch (e) {
+          console.error("Failed to refresh company data", e);
+      }
+      setIsRefreshing(false);
+  };
+
+  const handleDeleteClick = async () => {
+      if (window.confirm(`Are you sure you want to delete ${company.name} from the directory? This action cannot be undone.`)) {
+          setIsDeleting(true);
+          try {
+            await onDelete(company.id);
+            // We do NOT call onBack() here because the parent component (App.tsx) 
+            // handles setting selectedCompany to null when delete is successful, 
+            // which automatically unmounts this view.
+          } catch (e) {
+            console.error("Delete failed", e);
+            setIsDeleting(false);
+          }
+      }
+  };
+
+  const saveNameEdit = async () => {
+      if (tempName.trim() && tempName !== company.name) {
+          await onEditName(company.id, tempName);
+      }
+      setIsEditingName(false);
+  };
+
+  // Filter partners by type - Merged Enterprise
+  const enterprisePartners = company.partners.filter(p => 
+    p.type === 'Fortune500USA' || 
+    p.type === 'Fortune500Global' || 
+    p.type === 'Fortune500' as any
+  );
+  const cryptoPartners = company.partners.filter(p => p.type === 'CryptoNative');
+
+  // Domain extraction for fallback
+  const getDomain = () => {
+      if (company.website) {
+          try {
+              return new URL(company.website.startsWith('http') ? company.website : `https://${company.website}`).hostname;
+          } catch(e) { return ''; }
+      }
+      return '';
+  };
+
+  return (
+    <div className="bg-white rounded-xl border border-slate-200 shadow-sm min-h-[80vh] relative">
+      <AddNewsModal 
+        isOpen={isAddNewsOpen} 
+        onClose={() => setIsAddNewsOpen(false)} 
+        onSave={(news) => onAddNews(company.name, news)}
+        companyName={company.name}
+      />
+
+      {selectedJob && (
+          <JobDetailModal 
+            job={selectedJob} 
+            companyName={company.name} 
+            companyLogo={company.logoPlaceholder}
+            isOpen={!!selectedJob}
+            onClose={() => setSelectedJob(null)}
+          />
+      )}
+
+      {/* Header */}
+      <div className="p-6 border-b border-slate-100">
+        <button onClick={onBack} className="text-slate-500 hover:text-slate-800 flex items-center gap-2 mb-4 text-sm font-medium">
+          <ArrowLeft size={16} /> Back to Directory
+        </button>
+        
+        <div className="flex flex-col md:flex-row justify-between md:items-start gap-4">
+          <div className="flex items-start gap-4">
+             <img 
+                  src={company.logoPlaceholder} 
+                  alt={company.name} 
+                  className="w-20 h-20 rounded-xl bg-white border border-slate-200 object-contain p-2 shadow-sm" 
+                  onError={(e) => {
+                    const target = e.target as HTMLImageElement;
+                    const domain = getDomain();
+                    
+                    // Fallback Chain: Clearbit (Default) -> Google Favicon -> UI Avatar
+                    if (target.src.includes('logo.clearbit.com') && domain) {
+                         target.src = `https://www.google.com/s2/favicons?domain=${domain}&sz=128`;
+                    } else if (target.src.includes('google.com')) {
+                         target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(company.name)}&background=f8fafc&color=64748b&size=128`;
+                    }
+                  }}
+            />
+            <div>
+              <div className="flex items-center gap-3">
+                 {isEditingName ? (
+                     <div className="flex items-center gap-2">
+                         <input 
+                            type="text" 
+                            value={tempName} 
+                            onChange={(e) => setTempName(e.target.value)}
+                            className="text-2xl font-bold text-slate-900 border border-slate-300 rounded px-2 py-1 focus:ring-2 focus:ring-indigo-500 outline-none"
+                         />
+                         <button onClick={saveNameEdit} className="p-1.5 bg-emerald-100 text-emerald-700 rounded hover:bg-emerald-200"><Check size={16} /></button>
+                         <button onClick={() => { setIsEditingName(false); setTempName(company.name); }} className="p-1.5 bg-slate-100 text-slate-600 rounded hover:bg-slate-200"><X size={16} /></button>
+                     </div>
+                 ) : (
+                     <h1 className="text-3xl font-bold text-slate-900 flex items-center gap-2 group">
+                         {company.name}
+                         <button onClick={() => setIsEditingName(true)} className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-slate-500 transition-all">
+                             <Edit2 size={16} />
+                         </button>
+                     </h1>
+                 )}
+                 <DetailFocusBadge focus={company.focus} />
+              </div>
+              <div className="flex flex-wrap gap-2 mt-2 items-center">
+                 {company.headquarters && (
+                   <span className="flex items-center gap-1 text-slate-500 text-sm mr-2">
+                     <MapPin size={14} /> {company.headquarters}
+                   </span>
+                 )}
+                 {company.categories.map(c => (
+                  <span key={c} className="bg-indigo-50 text-indigo-700 px-2.5 py-0.5 rounded-full text-xs font-semibold">
+                    {c}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <button 
+              onClick={handleRefreshClick}
+              disabled={isRefreshing}
+              className="flex items-center gap-2 px-4 py-2 border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-50 transition-colors disabled:opacity-70 font-medium text-sm"
+            >
+              <RefreshCw size={14} className={isRefreshing ? "animate-spin" : ""} />
+              {isRefreshing ? 'Analyzing...' : 'Refresh Intelligence'}
+            </button>
+            <button 
+              onClick={() => onShare(company)}
+              className="flex items-center gap-2 px-4 py-2 border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-50 transition-colors text-sm"
+            >
+              <Share2 size={16} /> Share
+            </button>
+            <a 
+              href={company.website} 
+              target="_blank" 
+              rel="noreferrer"
+              className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition-colors text-sm"
+            >
+              Visit Website <ExternalLink size={14} />
+            </a>
+          </div>
+        </div>
+        
+        <p className="mt-6 text-slate-600 leading-relaxed max-w-3xl">
+          {company.description}
+        </p>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex border-b border-slate-200 px-6">
+        <button 
+          onClick={() => setActiveTab('overview')}
+          className={`py-4 px-2 mr-6 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'overview' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+        >
+          <Handshake size={16} /> Partnerships & Network
+        </button>
+        <button 
+          onClick={() => setActiveTab('news')}
+          className={`py-4 px-2 mr-6 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'news' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+        >
+          <Newspaper size={16} /> News & Activity
+        </button>
+        <button 
+          onClick={() => setActiveTab('jobs')}
+          className={`py-4 px-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'jobs' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+        >
+          <Briefcase size={16} /> Talent & Jobs
+        </button>
+      </div>
+
+      <div className="p-6">
+        {activeTab === 'overview' && (
+          <div className="grid md:grid-cols-2 gap-6">
+            
+            {/* Funding Info (Only for Crypto-First) */}
+            {company.focus === 'Crypto-First' && (
+                <div className="col-span-full mb-2">
+                    <div className="bg-gradient-to-r from-slate-900 to-slate-800 rounded-xl p-6 text-white shadow-lg relative overflow-hidden">
+                        <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500 opacity-10 rounded-full blur-3xl -mr-10 -mt-10"></div>
+                        <div className="flex justify-between items-start mb-4">
+                            <h3 className="font-bold text-lg flex items-center gap-2">
+                                <DollarSign size={20} className="text-emerald-400" /> Funding & Backing
+                            </h3>
+                            {company.funding?.lastRoundDate && (
+                                <span className="text-xs bg-white/10 px-2 py-1 rounded text-slate-300">
+                                    Last Round: {company.funding.lastRoundDate}
+                                </span>
+                            )}
+                        </div>
+                        
+                        {company.funding ? (
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                <div>
+                                    <div className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Total Raised</div>
+                                    <div className="text-2xl font-bold text-white">{company.funding.totalRaised || "Undisclosed"}</div>
+                                </div>
+                                <div>
+                                    <div className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Latest Valuation</div>
+                                    <div className="text-2xl font-bold text-white">{company.funding.valuation || "Unknown"}</div>
+                                </div>
+                                <div>
+                                    <div className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Key Investors</div>
+                                    <div className="flex flex-wrap gap-2">
+                                        {(company.funding.investors || []).slice(0, 4).map(inv => (
+                                            <span key={inv} className="bg-white/20 px-2 py-1 rounded text-xs font-medium">{inv}</span>
+                                        ))}
+                                        {(!company.funding.investors || company.funding.investors.length === 0) && (
+                                            <span className="text-slate-500 text-sm">No data available</span>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="text-slate-400 text-sm italic">
+                                Funding details not yet analyzed. Click "Refresh Intelligence" to update.
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* Fortune 500 & Enterprise Column (Merged) */}
+            <div className="bg-slate-50 p-5 rounded-xl border border-slate-200">
+              <h3 className="text-sm font-bold text-slate-900 mb-4 flex items-center gap-2 uppercase tracking-wide">
+                <Globe size={16} className="text-blue-600" /> Fortune 500 & Enterprise
+              </h3>
+              {enterprisePartners.length === 0 ? (
+                <p className="text-xs text-slate-500 italic">No partnerships tracked.</p>
+              ) : (
+                <ul className="space-y-3">
+                  {enterprisePartners.map((p, idx) => (
+                    <li key={idx} className="bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
+                      <div className="flex justify-between items-start">
+                        <div className="font-semibold text-slate-900 text-sm">{p.name}</div>
+                        {p.type === 'Fortune500USA' && <span className="text-[9px] text-slate-400 font-bold uppercase">USA</span>}
+                        {p.type === 'Fortune500Global' && <span className="text-[9px] text-slate-400 font-bold uppercase">Global</span>}
+                      </div>
+                      <div className="text-xs text-slate-600 mt-1">{p.description}</div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            {/* Crypto Native Column */}
+            <div className="bg-slate-50 p-5 rounded-xl border border-slate-200">
+              <h3 className="text-sm font-bold text-slate-900 mb-4 flex items-center gap-2 uppercase tracking-wide">
+                <Sparkles size={16} className="text-indigo-600" /> Crypto Native
+              </h3>
+               {cryptoPartners.length === 0 ? (
+                <p className="text-xs text-slate-500 italic">No partnerships tracked.</p>
+              ) : (
+                <ul className="space-y-3">
+                  {cryptoPartners.map((p, idx) => (
+                    <li key={idx} className="bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
+                      <div className="font-semibold text-slate-900 text-sm">{p.name}</div>
+                      <div className="text-xs text-slate-600 mt-1">{p.description}</div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'news' && (
+            <div>
+               <div className="flex justify-between items-center mb-6">
+                  <h3 className="font-semibold text-slate-900">Latest Intelligence</h3>
+                  <button 
+                    onClick={() => setIsAddNewsOpen(true)}
+                    className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-indigo-700 transition-colors shadow-sm"
+                  >
+                      <Plus size={14} /> Add News Link
+                  </button>
+               </div>
+
+               {displayNews.length === 0 ? (
+                   <div className="text-center py-12 border-2 border-dashed border-slate-200 rounded-xl bg-slate-50">
+                       <Newspaper size={32} className="mx-auto text-slate-300 mb-2" />
+                       <p className="text-slate-500 text-sm font-medium">No recent news tracked.</p>
+                       <p className="text-slate-400 text-xs mt-1">Add a link to keep this profile updated.</p>
+                   </div>
+               ) : (
+                   <div className="space-y-4">
+                       {displayNews.map(item => (
+                           <div key={item.id} className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-all group">
+                                <div className="flex justify-between items-start mb-2">
+                                    <span className="text-[10px] font-bold bg-slate-100 text-slate-600 px-2 py-1 rounded uppercase tracking-wide">
+                                        {item.source}
+                                    </span>
+                                    <span className="text-slate-400 text-xs font-medium">{item.date}</span>
+                                </div>
+                                <h4 className="text-base font-bold text-slate-900 mb-2 group-hover:text-indigo-600 transition-colors">
+                                    {item.title}
+                                </h4>
+                                <p className="text-sm text-slate-600 leading-relaxed mb-4">
+                                    {item.summary}
+                                </p>
+                                <a 
+                                    href={item.url} 
+                                    target="_blank" 
+                                    rel="noreferrer" 
+                                    className="inline-flex items-center gap-1 text-xs font-bold text-indigo-600 hover:underline"
+                                >
+                                    Read Source <ExternalLink size={12} />
+                                </a>
+                           </div>
+                       ))}
+                   </div>
+               )}
+            </div>
+        )}
+
+        {activeTab === 'jobs' && (
+          <div>
+            {!jobsLoaded && !loadingJobs && (
+              <div className="text-center py-12">
+                <p className="text-slate-500 mb-4">Click below to scan for active strategy, CS, and BD roles.</p>
+                <button 
+                  onClick={fetchJobs}
+                  className="bg-indigo-600 text-white px-6 py-2 rounded-lg hover:bg-indigo-700 transition-colors shadow-sm"
+                >
+                  Scan Job Boards (AI)
+                </button>
+              </div>
+            )}
+
+            {loadingJobs && (
+              <div className="text-center py-12">
+                <div className="animate-spin w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full mx-auto mb-4"></div>
+                <p className="text-slate-600">Scanning for open positions...</p>
+              </div>
+            )}
+
+            {jobs.length > 0 && (
+               <div className="space-y-3">
+                 <h3 className="font-semibold text-slate-900 mb-4">Open Positions ({jobs.length})</h3>
+                 <p className="text-xs text-slate-400 mb-2">Showing positions posted in last 6 months</p>
+                 {jobs.map(job => (
+                   <div key={job.id} className="relative flex justify-between items-center p-4 bg-white border border-slate-200 rounded-lg hover:border-indigo-300 transition-colors group">
+                      <div>
+                        <h4 className="font-medium text-slate-900 cursor-pointer hover:text-indigo-600 transition-colors" onClick={() => setSelectedJob(job)}>
+                            {job.title}
+                        </h4>
+                        <div className="flex gap-3 text-sm text-slate-500 mt-1">
+                          <span>{job.department}</span>
+                          <span>•</span>
+                          <span>{job.locations.join(', ')}</span>
+                          <span>•</span>
+                          <span>Posted {job.postedDate}</span>
+                        </div>
+                        {job.salary && (
+                            <div className="mt-2 text-xs font-semibold text-emerald-600 bg-emerald-50 w-fit px-2 py-0.5 rounded">
+                                {job.salary}
+                            </div>
+                        )}
+                      </div>
+                      
+                      <div className="flex items-center gap-3">
+                          <button 
+                             onClick={() => setSelectedJob(job)} 
+                             className="text-indigo-600 text-sm font-medium hover:bg-indigo-50 px-3 py-1.5 rounded transition-colors"
+                          >
+                             View Details
+                          </button>
+                          
+                          <div className="relative">
+                              <button 
+                                onClick={() => setFlaggingJobId(flaggingJobId === job.id ? null : job.id)}
+                                className="text-slate-300 hover:text-red-500 p-1 rounded-full transition-colors"
+                                title="Report issue with this job"
+                              >
+                                  <Flag size={14} />
+                              </button>
+                              
+                              {flaggingJobId === job.id && (
+                                  <div className="absolute right-0 top-full mt-2 w-48 bg-white border border-slate-200 rounded-lg shadow-xl z-20 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider px-3 py-2 bg-slate-50 border-b border-slate-100">
+                                          Dismiss Job
+                                      </div>
+                                      <button 
+                                        onClick={() => handleDismissJob(job.id, 'Incorrect Company')}
+                                        className="w-full text-left px-3 py-2 text-xs text-slate-600 hover:bg-slate-50 flex items-center gap-2"
+                                      >
+                                          <Ban size={12} className="text-red-500" /> Wrong Company
+                                      </button>
+                                      <button 
+                                        onClick={() => handleDismissJob(job.id, 'Not Crypto')}
+                                        className="w-full text-left px-3 py-2 text-xs text-slate-600 hover:bg-slate-50 flex items-center gap-2"
+                                      >
+                                          <X size={12} /> Not Relevant
+                                      </button>
+                                  </div>
+                              )}
+                          </div>
+                      </div>
+                   </div>
+                 ))}
+               </div>
+            )}
+
+            {jobsLoaded && jobs.length === 0 && !loadingJobs && (
+               <div className="text-center py-8 text-slate-500">No specific roles found in selected departments (last 6 months).</div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Footer / Danger Zone */}
+      <div className="p-6 border-t border-slate-100 flex justify-end">
+          <button 
+            onClick={handleDeleteClick}
+            disabled={isDeleting}
+            className="text-red-500 text-xs font-medium hover:text-red-700 flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+              {isDeleting ? <RefreshCw size={12} className="animate-spin" /> : <Trash2 size={12} />}
+              {isDeleting ? 'Deleting...' : 'Delete Company'}
+          </button>
+      </div>
+    </div>
+  );
+};
+
+export default CompanyDetail;
