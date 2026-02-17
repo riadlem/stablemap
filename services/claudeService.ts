@@ -7,8 +7,10 @@ const CLAUDE_MODEL = 'claude-sonnet-4-20250514';
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 1500;
 
-// Proxy endpoint — our serverless function holds the API key server-side
+// Proxy endpoints — serverless functions hold API keys server-side
 const API_PROXY_URL = '/api/claude';
+const FETCH_URL_ENDPOINT = '/api/fetch-url';
+const NEWS_API_ENDPOINT = '/api/news';
 
 export const getCurrentModelName = (): string => {
   return CLAUDE_MODEL;
@@ -108,6 +110,54 @@ const parseJSON = (text: string): any => {
     return JSON.parse(clean);
   } catch (e) {
     return null;
+  }
+};
+
+// --- URL CONTENT FETCHER (via /api/fetch-url) ---
+
+const fetchUrlContent = async (
+  url: string
+): Promise<{ title: string; content: string } | null> => {
+  try {
+    const response = await fetch(FETCH_URL_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    return { title: data.title || '', content: data.content || '' };
+  } catch {
+    return null;
+  }
+};
+
+// --- NEWS API FETCHER (via /api/news) ---
+
+interface NewsAPIArticle {
+  title: string;
+  source: string;
+  date: string;
+  summary: string;
+  url: string;
+  author: string;
+}
+
+const fetchNewsFromAPI = async (
+  query: string,
+  from?: string
+): Promise<NewsAPIArticle[]> => {
+  try {
+    const response = await fetch(NEWS_API_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, from, pageSize: 20 }),
+    });
+    if (!response.ok) return [];
+    const data = await response.json();
+    return data.articles || [];
+  } catch {
+    return [];
   }
 };
 
@@ -219,9 +269,41 @@ RETURN ONLY RAW JSON ARRAY.`;
 };
 
 export const analyzeJobLink = async (url: string): Promise<any> => {
-  const prompt = `I have a job listing URL: ${url}
+  // Try to fetch actual page content first
+  const pageContent = await fetchUrlContent(url);
 
-Note: You cannot access this URL directly. Instead, analyze the URL structure to infer what you can about the job listing. Many job URLs contain the company name, job title, and location in the URL path or query parameters (e.g., greenhouse.io, lever.co, linkedin.com/jobs paths often encode this information).
+  let prompt: string;
+
+  if (pageContent && pageContent.content.length > 100) {
+    // We have real page content — ask Claude to analyze it
+    const truncatedContent = pageContent.content.substring(0, 8000);
+    prompt = `Analyze this job listing page content extracted from ${url}:
+
+---
+Page title: ${pageContent.title}
+
+Content:
+${truncatedContent}
+---
+
+Extract structured information from this job listing and return a JSON object with:
+- "companyName": string (the hiring company)
+- "jobTitle": string (the position title)
+- "locations": string[] (listed locations or ["Remote"])
+- "department": "Strategy" | "Customer Success" | "Business Dev" | "Partnerships" | "Other"
+- "salary": string (if mentioned, otherwise empty string)
+- "description": string (brief summary of the role)
+- "requirements": string[] (key requirements/qualifications listed)
+- "benefits": string[] (benefits mentioned)
+- "type": "Full-time" | "Contract" | "Remote"
+
+Extract as much as you can from the actual page content.
+RETURN ONLY RAW JSON.`;
+  } else {
+    // Fallback: URL-only analysis when page fetch fails
+    prompt = `I have a job listing URL: ${url}
+
+Note: The page content could not be fetched. Instead, analyze the URL structure to infer what you can about the job listing. Many job URLs contain the company name, job title, and location in the URL path or query parameters (e.g., greenhouse.io, lever.co, linkedin.com/jobs paths often encode this information).
 
 Based on the URL pattern and your knowledge of the company (if identifiable), return a JSON object with:
 - "companyName": string (inferred from URL domain or path, or empty string if unclear)
@@ -236,11 +318,14 @@ Based on the URL pattern and your knowledge of the company (if identifiable), re
 
 Only populate fields you can reasonably infer from the URL and your knowledge. Leave others empty.
 RETURN ONLY RAW JSON.`;
+  }
 
   try {
     return await executeWithRetry('analyzeJobLink', async () => {
       const text = await callClaude(prompt, SYSTEM_PROMPT, 0.3);
-      return parseJSON(text) || {};
+      const result = parseJSON(text) || {};
+      result._sourceMethod = pageContent ? 'page-content' : 'url-inference';
+      return result;
     });
   } catch (error) {
     console.error('analyzeJobLink failed:', error);
@@ -251,6 +336,40 @@ RETURN ONLY RAW JSON.`;
 export const fetchIndustryNews = async (
   directoryCompanies: string[] = []
 ): Promise<NewsItem[]> => {
+  // Step 1: Try to get real news from NewsAPI
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  const fromDate = thirtyDaysAgo.toISOString().split('T')[0];
+
+  const searchQuery = 'stablecoin OR "digital asset" OR "blockchain enterprise" OR CBDC OR "crypto custody"';
+  const apiArticles = await fetchNewsFromAPI(searchQuery, fromDate);
+
+  if (apiArticles.length > 0) {
+    // We have real news — match against tracked companies
+    const companySet = directoryCompanies.map((c) => c.toLowerCase());
+
+    return apiArticles
+      .filter((a) => a.title && a.summary)
+      .map((article, idx) => {
+        const relatedCompanies = directoryCompanies.filter(
+          (company) =>
+            article.title.toLowerCase().includes(company.toLowerCase()) ||
+            article.summary.toLowerCase().includes(company.toLowerCase())
+        );
+
+        return {
+          id: `news-api-${Date.now()}-${idx}`,
+          title: article.title,
+          source: article.source || 'News',
+          date: article.date || new Date().toISOString().split('T')[0],
+          summary: article.summary,
+          url: article.url || '#',
+          relatedCompanies,
+        };
+      });
+  }
+
+  // Step 2: Fallback to Claude's knowledge when NewsAPI is unavailable
   const companiesList = directoryCompanies.slice(0, 30).join(', ');
   const prompt = `Based on your knowledge, provide notable strategic developments and milestones in the stablecoin, digital asset, and enterprise blockchain space.
 
