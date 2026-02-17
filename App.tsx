@@ -209,8 +209,12 @@ const App: React.FC = () => {
       region: 'Global',
       focus: 'Crypto-Second' 
     };
-    setCompanies(current => [skeleton, ...current]);
-    
+    setCompanies(current => {
+      const updated = [skeleton, ...current];
+      db.saveCompanies(updated).catch(console.error);
+      return updated;
+    });
+
     try {
         const enriched = await enrichCompanyData(normalizedName);
         if (enriched.partners && enriched.partners.length > 0) await syncPartnershipsToNews(normalizedName, enriched.partners);
