@@ -24,7 +24,7 @@ import Logs from './components/Logs';
 import CompanyLists from './components/CompanyLists';
 import ShareModal from './components/ShareModal';
 import { Company, Partner, NewsItem, Category } from './types';
-import { enrichCompanyData, scanForNewPartnerships, recommendMissingCompanies, getCurrentModelName, fetchUrlContent, analyzeNewsForCompanies } from "./services/claudeService";
+import { enrichCompanyData, scanForNewPartnerships, recommendMissingCompanies, getCurrentModelName, fetchUrlContent, analyzeNewsForCompanies, analyzeNewsRelationships } from "./services/claudeService";
 import { db } from './services/db';
 
 enum View {
@@ -193,18 +193,56 @@ const App: React.FC = () => {
 
           await db.saveNews([newItem]);
 
-          // Update recentNews on all matching companies
-          setCompanies(current => {
-              const updated = current.map(c => {
-                  const isMatch = mentionedNames.some(n => generateCompanyId(n) === c.id || c.name === n);
-                  if (!isMatch) return c;
-                  const existing = c.recentNews || [];
-                  if (existing.some(n => n.id === newItem.id)) return c;
-                  return { ...c, recentNews: [newItem, ...existing] };
-              });
-              db.saveCompanies(updated).catch(console.error);
-              return updated;
+          // Compute companies with updated recentNews
+          let withNews = companies.map(c => {
+              const isMatch = mentionedNames.some(n => generateCompanyId(n) === c.id || c.name === n);
+              if (!isMatch) return c;
+              const existing = c.recentNews || [];
+              if (existing.some(n => n.id === newItem.id)) return c;
+              return { ...c, recentNews: [newItem, ...existing] };
           });
+
+          // Infer and create Partner relationships from article if 2+ companies mentioned
+          if (mentionedNames.length > 1 && urlData?.content) {
+              const relationships = await analyzeNewsRelationships(urlData.content, mentionedNames).catch(() => []);
+              if (relationships.length > 0) {
+                  const compMap = new Map<string, Company>(withNews.map(c => [c.id, c]));
+                  for (const rel of relationships) {
+                      const id1 = generateCompanyId(rel.company1);
+                      const id2 = generateCompanyId(rel.company2);
+                      const c1 = compMap.get(id1);
+                      const c2 = compMap.get(id2);
+                      if (c1 && !c1.partners.some(p => p.name.toLowerCase() === rel.company2.toLowerCase())) {
+                          compMap.set(id1, {
+                              ...c1,
+                              partners: [...c1.partners, {
+                                  name: rel.company2,
+                                  type: rel.company2PartnerType,
+                                  description: rel.description,
+                                  date: rel.date || news.date,
+                                  sourceUrl: news.url
+                              }]
+                          });
+                      }
+                      if (c2 && !c2.partners.some(p => p.name.toLowerCase() === rel.company1.toLowerCase())) {
+                          compMap.set(id2, {
+                              ...c2,
+                              partners: [...c2.partners, {
+                                  name: rel.company1,
+                                  type: rel.company1PartnerType,
+                                  description: rel.description,
+                                  date: rel.date || news.date,
+                                  sourceUrl: news.url
+                              }]
+                          });
+                      }
+                  }
+                  withNews = Array.from(compMap.values());
+              }
+          }
+
+          setCompanies(withNews);
+          db.saveCompanies(withNews).catch(console.error);
       } catch (e) { console.error("Failed to save news", e); }
   };
 

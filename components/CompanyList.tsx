@@ -52,8 +52,17 @@ const CompanyList: React.FC<CompanyListProps> = ({ companies, onSelectCompany, o
   const [isMerging, setIsMerging] = useState(false);
   const [mergeResult, setMergeResult] = useState<string | null>(null);
 
-  // Extract unique regions
-  const regions = ['All', ...Array.from(new Set(companies.map(c => c.region || 'Global').filter(Boolean)))];
+  // Hierarchical region filter options
+  const REGION_OPTIONS = [
+    { label: 'All Regions', value: 'All' },
+    { label: 'North America', value: 'North America' },
+    { label: 'European Union', value: 'EU' },
+    { label: 'Europe (incl. EU, UK, CH)', value: 'Europe' },
+    { label: 'APAC', value: 'APAC' },
+    { label: 'LATAM', value: 'LATAM' },
+    { label: 'MEA', value: 'MEA' },
+    { label: 'Global / Remote', value: 'Global' },
+  ];
 
   // Calculate Category Counts
   const categoryCounts = useMemo(() => {
@@ -77,7 +86,10 @@ const CompanyList: React.FC<CompanyListProps> = ({ companies, onSelectCompany, o
 
   const filtered = companies.filter(c => {
     const catMatch = filter === 'All' || c.categories?.includes(filter);
-    const regionMatch = regionFilter === 'All' || (c.region || 'Global') === regionFilter;
+    const regionMatch = regionFilter === 'All'
+      || (regionFilter === 'Europe' && (c.region === 'EU' || c.region === 'Europe'))
+      || (regionFilter === 'MEA' && (c.region === 'MEA' || c.region === 'EMEA'))
+      || c.region === regionFilter;
     const focusMatch = focusFilter === 'All' || c.focus === focusFilter;
     const searchMatch = !searchTerm || 
                         c.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -304,13 +316,13 @@ const CompanyList: React.FC<CompanyListProps> = ({ companies, onSelectCompany, o
 
          <div className="flex items-center gap-2 px-2 border-l border-slate-100">
             <Globe size={16} className="text-slate-400" />
-            <select 
+            <select
               value={regionFilter}
               onChange={(e) => setRegionFilter(e.target.value)}
               className="text-sm bg-transparent outline-none text-slate-700 border-none focus:ring-0 cursor-pointer py-2 font-medium"
             >
-              {regions.map(r => (
-                <option key={r} value={r}>{r}</option>
+              {REGION_OPTIONS.map(r => (
+                <option key={r.value} value={r.value}>{r.label}</option>
               ))}
             </select>
         </div>
@@ -510,9 +522,12 @@ const CompanyList: React.FC<CompanyListProps> = ({ companies, onSelectCompany, o
                         </div>
                       </td>
                       <td className="p-4">
-                        <div className="flex flex-col">
+                        <div className="flex flex-col gap-0.5">
                           <span className="text-xs font-medium text-slate-700">{company.headquarters || '-'}</span>
-                          <span className="text-[10px] text-slate-400">{company.region}</span>
+                          <span className="text-[10px] text-slate-400">{company.region}{company.country ? ` · ${company.country}` : ''}</span>
+                          {company.industry && (
+                            <span className="text-[9px] text-indigo-500 font-bold uppercase tracking-wide">{company.industry}</span>
+                          )}
                         </div>
                       </td>
                       <td className="p-4">
