@@ -50,7 +50,7 @@ async function handleClaude(req, res) {
     const body = await readBody(req);
 
     const anthropicBody = {
-      model: body.model || 'claude-sonnet-4-20250514',
+      model: body.model || 'claude-sonnet-4-5-20250929',
       max_tokens: Math.min(body.max_tokens || 4096, 8192),
       messages: body.messages,
       temperature: body.temperature ?? 0.7,
@@ -62,7 +62,7 @@ async function handleClaude(req, res) {
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': ANTHROPIC_API_KEY,
-        'anthropic-version': '2024-10-22',
+        'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify(anthropicBody),
     });
