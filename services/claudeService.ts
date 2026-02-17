@@ -136,12 +136,18 @@ RETURN ONLY RAW JSON. No markdown. No explanation.`;
 
   try {
     return await executeWithRetry('enrichCompanyData', async () => {
-      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.5);
-      const json = parseJSON(text) || {};
+      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.3);
+      const json = parseJSON(text);
+
+      if (!json || typeof json !== 'object') {
+        console.warn('enrichCompanyData: Claude returned unparseable response for', companyName);
+        return {};
+      }
 
       const mappedCategories: Category[] = [];
       if (Array.isArray(json.categories)) {
         json.categories.forEach((c: string) => {
+          if (typeof c !== 'string') return;
           const up = c.toUpperCase();
           if (up.includes('ISSUER')) mappedCategories.push(Category.ISSUER);
           else if (up.includes('INFRA')) mappedCategories.push(Category.INFRASTRUCTURE);
@@ -154,78 +160,90 @@ RETURN ONLY RAW JSON. No markdown. No explanation.`;
       }
 
       return {
-        description: json.description,
-        website: json.website,
-        headquarters: json.headquarters || 'Remote',
+        description: typeof json.description === 'string' ? json.description : undefined,
+        website: typeof json.website === 'string' ? json.website : undefined,
+        headquarters: typeof json.headquarters === 'string' ? json.headquarters : 'Remote',
         region: json.region || 'Global',
         focus: json.focus || 'Crypto-Second',
         categories: mappedCategories.length > 0 ? mappedCategories : [Category.INFRASTRUCTURE],
-        partners: Array.isArray(json.partners) ? json.partners : [],
+        partners: Array.isArray(json.partners) ? json.partners.filter((p: any) => p && typeof p.name === 'string') : [],
         funding: json.funding || undefined,
       };
     });
   } catch (error) {
-    console.error('Enrichment failed:', error);
+    console.error('Enrichment failed for', companyName, ':', error);
     return {};
   }
 };
 
 export const findJobOpenings = async (companyName: string): Promise<Job[]> => {
-  const prompt = `Search for current job openings at "${companyName}" in these departments: Strategy, Business Development, Partnerships, Customer Success.
+  const prompt = `Based on your knowledge of "${companyName}", what types of roles do they typically hire for in these departments: Strategy, Business Development, Partnerships, Customer Success?
 
-Return a JSON array of job objects with:
+Return a JSON array of plausible job objects based on your knowledge of the company's typical hiring patterns and publicly known career pages. Only include roles you are reasonably confident exist at this company.
+
+Each object should have:
 - "title": string
 - "department": "Strategy" | "Customer Success" | "Business Dev" | "Partnerships" | "Other"
-- "locations": string[] (e.g. ["New York, NY", "Remote"])
-- "postedDate": string (YYYY-MM-DD, approximate if needed)
-- "url": string (link to job posting if known)
-- "salary": string (e.g. "$140k - $180k", if visible)
+- "locations": string[] (e.g. ["New York, NY", "Remote"] — based on known office locations)
+- "postedDate": string (YYYY-MM-DD, use your best estimate or today's date)
+- "url": string (the company's careers page URL if known, otherwise empty string)
+- "salary": string (e.g. "$140k - $180k", only if you have reasonable knowledge of their compensation)
 
-Only include roles that actually exist. If you're not sure about a role, don't include it.
+IMPORTANT: Do NOT fabricate specific job listings. Only include roles consistent with the company's known operations and size. If you are uncertain, return an empty array [].
 RETURN ONLY RAW JSON ARRAY.`;
 
   try {
     return await executeWithRetry('findJobOpenings', async () => {
-      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.5);
+      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.3);
       const json = parseJSON(text);
-      if (!Array.isArray(json)) return [];
-      return json.map((j: any, idx: number) => ({
-        id: `gen-job-${Date.now()}-${idx}`,
-        title: j.title,
-        department: j.department as any,
-        locations: j.locations || ['Remote'],
-        postedDate: j.postedDate || new Date().toISOString().split('T')[0],
-        url: j.url,
-        salary: j.salary,
-      }));
+      if (!Array.isArray(json)) {
+        console.warn('findJobOpenings: Claude returned non-array response for', companyName);
+        return [];
+      }
+      return json
+        .filter((j: any) => j && typeof j.title === 'string' && j.title.trim() !== '')
+        .map((j: any, idx: number) => ({
+          id: `gen-job-${Date.now()}-${idx}`,
+          title: j.title,
+          department: j.department as any,
+          locations: Array.isArray(j.locations) ? j.locations : ['Remote'],
+          postedDate: j.postedDate || new Date().toISOString().split('T')[0],
+          url: typeof j.url === 'string' ? j.url : '',
+          salary: typeof j.salary === 'string' ? j.salary : undefined,
+        }));
     });
   } catch (error) {
+    console.error('findJobOpenings failed for', companyName, ':', error);
     return [];
   }
 };
 
 export const analyzeJobLink = async (url: string): Promise<any> => {
-  const prompt = `Extract details from this job listing URL: ${url}
+  const prompt = `I have a job listing URL: ${url}
 
-Return a JSON object with:
-- "companyName": string
-- "jobTitle": string
-- "locations": string[]
+Note: You cannot access this URL directly. Instead, analyze the URL structure to infer what you can about the job listing. Many job URLs contain the company name, job title, and location in the URL path or query parameters (e.g., greenhouse.io, lever.co, linkedin.com/jobs paths often encode this information).
+
+Based on the URL pattern and your knowledge of the company (if identifiable), return a JSON object with:
+- "companyName": string (inferred from URL domain or path, or empty string if unclear)
+- "jobTitle": string (inferred from URL path if present, or empty string)
+- "locations": string[] (based on known company office locations, or ["Remote"])
 - "department": "Strategy" | "Customer Success" | "Business Dev" | "Partnerships" | "Other"
-- "salary": string (if visible)
-- "description": string (brief summary)
-- "requirements": string[]
-- "benefits": string[]
+- "salary": string (empty string — cannot determine from URL alone)
+- "description": string (brief note about what could be inferred)
+- "requirements": string[] (empty array — cannot determine from URL alone)
+- "benefits": string[] (empty array — cannot determine from URL alone)
 - "type": "Full-time" | "Contract" | "Remote"
 
+Only populate fields you can reasonably infer from the URL and your knowledge. Leave others empty.
 RETURN ONLY RAW JSON.`;
 
   try {
     return await executeWithRetry('analyzeJobLink', async () => {
-      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.5);
+      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.3);
       return parseJSON(text) || {};
     });
   } catch (error) {
+    console.error('analyzeJobLink failed:', error);
     return {};
   }
 };
@@ -234,32 +252,42 @@ export const fetchIndustryNews = async (
   directoryCompanies: string[] = []
 ): Promise<NewsItem[]> => {
   const companiesList = directoryCompanies.slice(0, 30).join(', ');
-  const prompt = `Provide the latest strategic news and developments in the stablecoin, digital asset, and enterprise blockchain space from the last 30 days.
+  const prompt = `Based on your knowledge, provide notable strategic developments and milestones in the stablecoin, digital asset, and enterprise blockchain space.
 
 Focus especially on these companies if relevant: ${companiesList}
 
 Return a JSON array where each item has:
 - "title": string (headline)
-- "source": string (publication name)
-- "date": string (YYYY-MM-DD)
+- "source": string (publication name where this was reported)
+- "date": string (YYYY-MM-DD — use the actual date of the event based on your knowledge)
 - "summary": string (2-3 sentences)
 - "relatedCompanies": string[] (company names involved)
 
-Include 8-12 items covering: major partnerships, regulatory developments, product launches, and funding rounds.
+Include 8-12 items covering: major partnerships, regulatory developments, product launches, and funding rounds. Only include events you are confident actually happened — do NOT fabricate news.
 RETURN ONLY RAW JSON ARRAY.`;
 
   try {
     return await executeWithRetry('fetchIndustryNews', async () => {
-      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.7);
+      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.4);
       const json = parseJSON(text);
-      if (!Array.isArray(json)) return [];
-      return json.map((item: any, idx: number) => ({
-        ...item,
-        id: `gen-news-${Date.now()}-${idx}`,
-        url: item.url || '#',
-      }));
+      if (!Array.isArray(json)) {
+        console.warn('fetchIndustryNews: Claude returned non-array response');
+        return [];
+      }
+      return json
+        .filter((item: any) => item && typeof item.title === 'string' && typeof item.summary === 'string')
+        .map((item: any, idx: number) => ({
+          id: `gen-news-${Date.now()}-${idx}`,
+          title: item.title,
+          source: typeof item.source === 'string' ? item.source : 'Intelligence',
+          date: typeof item.date === 'string' ? item.date : new Date().toISOString().split('T')[0],
+          summary: item.summary,
+          url: typeof item.url === 'string' ? item.url : '#',
+          relatedCompanies: Array.isArray(item.relatedCompanies) ? item.relatedCompanies : [],
+        }));
     });
   } catch (error) {
+    console.error('fetchIndustryNews failed:', error);
     return [];
   }
 };
@@ -268,26 +296,34 @@ export const scanForNewPartnerships = async (
   companyName: string,
   existingPartnerNames: string[]
 ): Promise<Partner[]> => {
-  const prompt = `Find NEW strategic partnerships for "${companyName}" announced in the last 12 months in the digital asset, stablecoin, or blockchain space.
+  const prompt = `Based on your knowledge, identify strategic partnerships for "${companyName}" in the digital asset, stablecoin, or blockchain space.
 
 EXCLUDE these already-known partners: ${existingPartnerNames.join(', ')}
 
-Return a JSON array of new partnership objects with:
+Return a JSON array of partnership objects with:
 - "name": string (partner company name)
 - "type": "Fortune500USA" | "Fortune500Global" | "CryptoNative"
 - "description": string (what the partnership involves)
-- "date": string (YYYY-MM-DD of announcement)
-- "sourceUrl": string (link to press release if known)
+- "date": string (YYYY-MM-DD of announcement, use your best knowledge)
+- "sourceUrl": string (empty string if not known)
 
-Only include real, verified partnerships. If none found, return an empty array [].
+IMPORTANT: Only include partnerships you are confident actually exist. Do NOT fabricate partnerships. If you don't know of any beyond the excluded list, return an empty array [].
 RETURN ONLY RAW JSON ARRAY.`;
 
   try {
     return await executeWithRetry('scanForNewPartnerships', async () => {
-      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.5);
-      return parseJSON(text) || [];
+      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.3);
+      const json = parseJSON(text);
+      if (!Array.isArray(json)) {
+        console.warn('scanForNewPartnerships: Claude returned non-array response for', companyName);
+        return [];
+      }
+      return json.filter((p: any) =>
+        p && typeof p.name === 'string' && typeof p.description === 'string'
+      );
     });
   } catch (error) {
+    console.error('scanForNewPartnerships failed for', companyName, ':', error);
     return [];
   }
 };
@@ -295,25 +331,36 @@ RETURN ONLY RAW JSON ARRAY.`;
 export const researchCompanyActivity = async (
   companyName: string
 ): Promise<any> => {
-  const prompt = `Research "${companyName}" and their blockchain, digital asset, CBDC, or stablecoin activities and initiatives.
+  const prompt = `Based on your knowledge, describe "${companyName}" and their blockchain, digital asset, CBDC, or stablecoin activities and initiatives.
 
 Return a JSON object with:
 - "summary": string (1-2 paragraph overview of their blockchain strategy)
 - "initiatives": array of objects with:
   - "title": string (name of initiative)
-  - "date": string (YYYY-MM-DD)
+  - "date": string (YYYY-MM-DD, based on your knowledge)
   - "description": string (what it involves)
-  - "sourceUrl": string (link to source if known)
+  - "sourceUrl": string (empty string if not known)
 
-Include any tokenization projects, blockchain pilots, digital currency experiments, crypto custody services, or stablecoin integrations.
+Include any tokenization projects, blockchain pilots, digital currency experiments, crypto custody services, or stablecoin integrations that you are confident actually exist. Do NOT fabricate initiatives.
 RETURN ONLY RAW JSON.`;
 
   try {
     return await executeWithRetry('researchCompanyActivity', async () => {
-      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.7);
-      return parseJSON(text) || { summary: '', initiatives: [] };
+      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.4);
+      const json = parseJSON(text);
+      if (!json || typeof json !== 'object') {
+        console.warn('researchCompanyActivity: Claude returned unparseable response for', companyName);
+        return { summary: '', initiatives: [] };
+      }
+      return {
+        summary: typeof json.summary === 'string' ? json.summary : '',
+        initiatives: Array.isArray(json.initiatives)
+          ? json.initiatives.filter((i: any) => i && typeof i.title === 'string')
+          : [],
+      };
     });
   } catch (error) {
+    console.error('researchCompanyActivity failed for', companyName, ':', error);
     return { summary: 'Analysis unavailable.', initiatives: [] };
   }
 };
@@ -336,10 +383,18 @@ RETURN ONLY RAW JSON ARRAY.`;
 
   try {
     return await executeWithRetry('recommendMissingCompanies', async () => {
-      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.7);
-      return parseJSON(text) || [];
+      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.4);
+      const json = parseJSON(text);
+      if (!Array.isArray(json)) {
+        console.warn('recommendMissingCompanies: Claude returned non-array response');
+        return [];
+      }
+      return json.filter((item: any) =>
+        item && typeof item.name === 'string' && typeof item.reason === 'string'
+      );
     });
   } catch (error) {
+    console.error('recommendMissingCompanies failed:', error);
     return [];
   }
 };
