@@ -13,7 +13,7 @@ export type CompanyFocus = 'Crypto-First' | 'Crypto-Second';
 
 export interface Partner {
   name: string;
-  type: 'Fortune500USA' | 'Fortune500Global' | 'CryptoNative';
+  type: 'Fortune500Global' | 'CryptoNative';
   description: string;
   date?: string; // Date of announcement
   sourceUrl?: string; // Link to press release
@@ -63,8 +63,10 @@ export interface Company {
   partners: Partner[];
   website: string;
   headquarters: string; // e.g., "New York, USA"
-  region: 'North America' | 'Europe' | 'APAC' | 'LATAM' | 'EMEA' | 'Global';
+  region: 'North America' | 'EU' | 'Europe' | 'APAC' | 'LATAM' | 'MEA' | 'EMEA' | 'Global';
   focus: CompanyFocus; // Classification: Crypto-First vs Crypto-Second (Required)
+  country?: string;    // e.g., "USA", "Germany", "France"
+  industry?: string;   // e.g., "Digital Assets", "Payments", "Banking"
   jobs?: Job[];
   recentNews?: NewsItem[];
   funding?: FundingInfo;

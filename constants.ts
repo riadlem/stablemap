@@ -46,11 +46,11 @@ export const MOCK_COMPANIES: Company[] = [
     region: 'North America',
     focus: 'Crypto-First',
     partners: [
-      { name: 'BlackRock', type: 'Fortune500USA', description: 'Strategic partnership and custodian for USDC reserves.' },
-      { name: 'Visa', type: 'Fortune500USA', description: 'Enabling USDC payments on Visa network.' },
-      { name: 'Mastercard', type: 'Fortune500USA', description: 'Testing USDC settlements.' },
-      { name: 'Grab', type: 'Fortune500USA', description: 'Web3 wallet integration in Singapore.' },
-      { name: 'Stripe', type: 'Fortune500USA', description: 'Pay with USDC integration.' },
+      { name: 'BlackRock', type: 'Fortune500Global', description: 'Strategic partnership and custodian for USDC reserves.' },
+      { name: 'Visa', type: 'Fortune500Global', description: 'Enabling USDC payments on Visa network.' },
+      { name: 'Mastercard', type: 'Fortune500Global', description: 'Testing USDC settlements.' },
+      { name: 'Grab', type: 'Fortune500Global', description: 'Web3 wallet integration in Singapore.' },
+      { name: 'Stripe', type: 'Fortune500Global', description: 'Pay with USDC integration.' },
       { name: 'Sony', type: 'Fortune500Global', description: 'Powering bridged USDC on Soneium blockchain.' },
       { name: 'SBI Holdings', type: 'Fortune500Global', description: 'Strategic expansion of USDC in Japan.' },
       { name: 'Shell', type: 'Fortune500Global', description: 'Exploration of USDC for global B2B payments.' },
@@ -79,9 +79,9 @@ export const MOCK_COMPANIES: Company[] = [
     region: 'North America',
     focus: 'Crypto-First',
     partners: [
-      { name: 'PayPal', type: 'Fortune500USA', description: 'Issuer of PYUSD stablecoin.' },
-      { name: 'Interactive Brokers', type: 'Fortune500USA', description: 'Crypto trading infrastructure.' },
-      { name: 'Mercado Libre', type: 'Fortune500USA', description: 'Powering crypto capabilities in Brazil.' },
+      { name: 'PayPal', type: 'Fortune500Global', description: 'Issuer of PYUSD stablecoin.' },
+      { name: 'Interactive Brokers', type: 'Fortune500Global', description: 'Crypto trading infrastructure.' },
+      { name: 'Mercado Libre', type: 'Fortune500Global', description: 'Powering crypto capabilities in Brazil.' },
       { name: 'Societe Generale', type: 'Fortune500Global', description: 'Collaboration on digital asset issuance standards.' },
       { name: 'Mercedes-Benz Group', type: 'Fortune500Global', description: 'Exploring stablecoin-based supply chain settlements.' }
     ],
@@ -108,7 +108,7 @@ export const MOCK_COMPANIES: Company[] = [
     focus: 'Crypto-First',
     partners: [
       { name: 'Bitfinex', type: 'CryptoNative', description: 'Deep strategic integration.' },
-      { name: 'Lugano City', type: 'Fortune500USA', description: 'Plan B city adoption initiative (Government).' },
+      { name: 'Lugano City', type: 'Fortune500Global', description: 'Plan B city adoption initiative (Government).' },
       { name: 'Trafigura Group', type: 'Fortune500Global', description: 'Crude oil trade settlement pilots using USDT.' }
     ]
   },
@@ -125,7 +125,7 @@ export const MOCK_COMPANIES: Company[] = [
     region: 'North America',
     focus: 'Crypto-First',
     partners: [
-      { name: 'BNY Mellon', type: 'Fortune500USA', description: 'Digital asset custody platform.' },
+      { name: 'BNY Mellon', type: 'Fortune500Global', description: 'Digital asset custody platform.' },
       { name: 'ANZ Group Holdings', type: 'Fortune500Global', description: 'Australian Dollar stablecoin pilot A$DC.' },
       { name: 'National Australia Bank', type: 'Fortune500Global', description: 'First cross-border stablecoin transfer.' },
       { name: 'Toyota Motor', type: 'Fortune500Global', description: 'Research into blockchain for automotive logistics.' },
@@ -145,7 +145,7 @@ export const MOCK_COMPANIES: Company[] = [
     focus: 'Crypto-First',
     partners: [
       { name: 'Deutsche Bank', type: 'Fortune500Global', description: 'Global crypto custody and tokenization partnership.' },
-      { name: 'Credit Suisse', type: 'Fortune500USA', description: 'Strategic investment and custody implementation.' },
+      { name: 'Credit Suisse', type: 'Fortune500Global', description: 'Strategic investment and custody implementation.' },
       { name: 'Santander', type: 'Fortune500Global', description: 'Digital asset custody and tokenization infrastructure.' },
       { name: 'BMW Group', type: 'Fortune500Global', description: 'Asset tokenization and loyalty system exploration.' }
     ],
@@ -188,7 +188,7 @@ export const MOCK_COMPANIES: Company[] = [
     focus: 'Crypto-First',
     partners: [
       { name: 'Circle', type: 'CryptoNative', description: 'Strategic stablecoin partnership.' },
-      { name: 'Worldpay', type: 'Fortune500USA', description: 'Settlement via stablecoins.' }
+      { name: 'Worldpay', type: 'Fortune500Global', description: 'Settlement via stablecoins.' }
     ]
   },
   {
@@ -202,7 +202,7 @@ export const MOCK_COMPANIES: Company[] = [
     region: 'North America',
     focus: 'Crypto-First',
     partners: [
-      { name: 'Stripe', type: 'Fortune500USA', description: 'Parent company.' },
+      { name: 'Stripe', type: 'Fortune500Global', description: 'Parent company.' },
       { name: 'Coinbase', type: 'CryptoNative', description: 'Base L2 integration.' }
     ]
   },
@@ -217,7 +217,7 @@ export const MOCK_COMPANIES: Company[] = [
     region: 'North America',
     focus: 'Crypto-First',
     partners: [
-      { name: 'Visa', type: 'Fortune500USA', description: 'Visa Direct capability for crypto withdrawals.' },
+      { name: 'Visa', type: 'Fortune500Global', description: 'Visa Direct capability for crypto withdrawals.' },
       { name: 'MetaMask', type: 'CryptoNative', description: 'Primary on-ramp provider.' }
     ]
   },
@@ -246,7 +246,7 @@ export const MOCK_COMPANIES: Company[] = [
     region: 'North America',
     focus: 'Crypto-First',
     partners: [
-      { name: 'PayPal', type: 'Fortune500USA', description: 'Integration for US users to buy crypto.' },
+      { name: 'PayPal', type: 'Fortune500Global', description: 'Integration for US users to buy crypto.' },
       { name: 'OpenSea', type: 'CryptoNative', description: 'Checkout integration for NFTs.' }
     ]
   },
@@ -261,8 +261,8 @@ export const MOCK_COMPANIES: Company[] = [
     region: 'North America',
     focus: 'Crypto-First',
     partners: [
-      { name: 'Stripe', type: 'Fortune500USA', description: 'Powering crypto infrastructure for Connect.' },
-      { name: 'Interactive Brokers', type: 'Fortune500USA', description: 'Crypto liquidity and custody.' }
+      { name: 'Stripe', type: 'Fortune500Global', description: 'Powering crypto infrastructure for Connect.' },
+      { name: 'Interactive Brokers', type: 'Fortune500Global', description: 'Crypto liquidity and custody.' }
     ]
   },
   {
@@ -290,8 +290,8 @@ export const MOCK_COMPANIES: Company[] = [
     region: 'North America',
     focus: 'Crypto-First',
     partners: [
-      { name: 'BlackRock', type: 'Fortune500USA', description: 'Aladdin integration and custody for ETFs.' },
-      { name: 'Google', type: 'Fortune500USA', description: 'Cloud payments via crypto.' },
+      { name: 'BlackRock', type: 'Fortune500Global', description: 'Aladdin integration and custody for ETFs.' },
+      { name: 'Google', type: 'Fortune500Global', description: 'Cloud payments via crypto.' },
       { name: 'Standard Chartered', type: 'Fortune500Global', description: 'Banking and payment rails partnership.' },
       { name: 'Samsung Electronics', type: 'Fortune500Global', description: 'Wallet and keystore integration for mobile devices.' },
       { name: 'Panasonic Holdings', type: 'Fortune500Global', description: 'Crypto payment options for digital services.' }
@@ -429,7 +429,7 @@ export const MOCK_COMPANIES: Company[] = [
     focus: 'Crypto-Second',
     partners: [
       { name: 'Solana', type: 'CryptoNative', description: 'High throughput settlement pilot.' },
-      { name: 'Worldpay', type: 'Fortune500USA', description: 'Merchant stablecoin settlement.' }
+      { name: 'Worldpay', type: 'Fortune500Global', description: 'Merchant stablecoin settlement.' }
     ]
   },
 
@@ -484,8 +484,8 @@ export const MOCK_COMPANIES: Company[] = [
     region: 'North America',
     focus: 'Crypto-First',
     partners: [
-      { name: 'Visa', type: 'Fortune500USA', description: 'USDC settlement pilot.' },
-      { name: 'Shopify', type: 'Fortune500USA', description: 'Solana Pay integration.' }
+      { name: 'Visa', type: 'Fortune500Global', description: 'USDC settlement pilot.' },
+      { name: 'Shopify', type: 'Fortune500Global', description: 'Solana Pay integration.' }
     ]
   },
 
@@ -501,7 +501,7 @@ export const MOCK_COMPANIES: Company[] = [
     region: 'North America',
     focus: 'Crypto-First',
     partners: [
-      { name: 'Visa', type: 'Fortune500USA', description: 'Crypto settlement capabilities.' },
+      { name: 'Visa', type: 'Fortune500Global', description: 'Crypto settlement capabilities.' },
       { name: 'Allianz', type: 'Fortune500Global', description: 'Institutional custody and insurance framework.' }
     ]
   },
@@ -516,7 +516,7 @@ export const MOCK_COMPANIES: Company[] = [
     region: 'North America',
     focus: 'Crypto-First',
     partners: [
-      { name: 'Nike', type: 'Fortune500USA', description: 'Custody for RTFKT/NFT assets.' }
+      { name: 'Nike', type: 'Fortune500Global', description: 'Custody for RTFKT/NFT assets.' }
     ]
   },
   {
@@ -530,7 +530,7 @@ export const MOCK_COMPANIES: Company[] = [
     region: 'Europe',
     focus: 'Crypto-First',
     partners: [
-      { name: 'State Street', type: 'Fortune500USA', description: 'Digital asset custody licensing.' }
+      { name: 'State Street', type: 'Fortune500Global', description: 'Digital asset custody licensing.' }
     ]
   },
 
@@ -546,7 +546,7 @@ export const MOCK_COMPANIES: Company[] = [
     region: 'Global',
     focus: 'Crypto-First',
     partners: [
-      { name: 'Mastercard', type: 'Fortune500USA', description: 'Testing card-to-wallet transactions.' }
+      { name: 'Mastercard', type: 'Fortune500Global', description: 'Testing card-to-wallet transactions.' }
     ]
   },
   {

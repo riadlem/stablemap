@@ -202,10 +202,13 @@ export const enrichCompanyData = async (
 I need a JSON object with these fields:
 - "description": string (2-3 sentence company overview)
 - "categories": string[] (from: "Issuer", "Infrastructure", "Wallet", "Payments", "DeFi", "Custody", "Banks")
-- "partners": array of objects with { "name": string, "type": "Fortune500USA" | "Fortune500Global" | "CryptoNative", "description": string, "date": string (YYYY-MM-DD if known), "sourceUrl": string (if known) }
+- "partners": array of objects with { "name": string, "type": "Fortune500Global" | "Fortune500Global" | "CryptoNative", "description": string, "date": string (YYYY-MM-DD if known), "sourceUrl": string (if known) }
 - "website": string (official URL)
 - "headquarters": string (City, Country)
-- "region": "North America" | "Europe" | "APAC" | "LATAM" | "EMEA" | "Global"
+- "country": string (country of HQ, e.g. "USA", "Germany", "Singapore", "United Kingdom")
+- "industry": string (primary industry vertical, e.g. "Digital Assets", "Payments", "Banking", "Crypto Infrastructure", "DeFi")
+- "region": "North America" | "EU" | "Europe" | "APAC" | "LATAM" | "MEA" | "Global"
+  (EU = headquartered in an EU member state such as France, Germany, Netherlands, Spain, Italy; Europe = UK, Switzerland, Norway or other non-EU European country; MEA = Middle East or Africa; North America = USA or Canada)
 - "focus": "Crypto-First" | "Crypto-Second" (Crypto-First = born as crypto company, Crypto-Second = traditional company that added crypto)
 - "funding": { "totalRaised": string, "lastRound": string, "valuation": string, "investors": string[], "lastRoundDate": string } (if available, otherwise omit)
 
@@ -240,6 +243,8 @@ RETURN ONLY RAW JSON. No markdown. No explanation.`;
         description: typeof json.description === 'string' ? json.description : undefined,
         website: typeof json.website === 'string' ? json.website : undefined,
         headquarters: typeof json.headquarters === 'string' ? json.headquarters : 'Remote',
+        country: typeof json.country === 'string' ? json.country : undefined,
+        industry: typeof json.industry === 'string' ? json.industry : undefined,
         region: json.region || 'Global',
         focus: json.focus || 'Crypto-Second',
         categories: mappedCategories.length > 0 ? mappedCategories : [Category.INFRASTRUCTURE],
@@ -451,7 +456,7 @@ EXCLUDE these already-known partners: ${existingPartnerNames.join(', ')}
 
 Return a JSON array of partnership objects with:
 - "name": string (partner company name)
-- "type": "Fortune500USA" | "Fortune500Global" | "CryptoNative"
+- "type": "Fortune500Global" | "Fortune500Global" | "CryptoNative"
 - "description": string (what the partnership involves)
 - "date": string (YYYY-MM-DD of announcement, use your best knowledge)
 - "sourceUrl": string (empty string if not known)
@@ -584,5 +589,61 @@ RETURN ONLY RAW JSON.`;
   } catch (error) {
     console.error('analyzeNewsForCompanies failed:', error);
     return { mentionedCompanies: [], summary: '' };
+  }
+};
+
+export interface NewsRelationship {
+  company1: string;
+  company2: string;
+  description: string;
+  company1PartnerType: 'Fortune500Global' | 'Fortune500Global' | 'CryptoNative';
+  company2PartnerType: 'Fortune500Global' | 'Fortune500Global' | 'CryptoNative';
+  date?: string;
+}
+
+export const analyzeNewsRelationships = async (
+  content: string,
+  mentionedCompanies: string[]
+): Promise<NewsRelationship[]> => {
+  if (mentionedCompanies.length < 2) return [];
+  const truncated = content.length > 8000 ? content.substring(0, 8000) + '\n[truncated]' : content;
+  const prompt = `Analyze this article and identify formal business relationships between the following companies.
+
+COMPANIES TO ANALYZE:
+${mentionedCompanies.join(', ')}
+
+ARTICLE CONTENT:
+${truncated}
+
+Return a JSON array of relationship objects. Only include pairs where the article EXPLICITLY describes a formal relationship (investment, partnership, acquisition, integration, joint venture, licensing deal). Do NOT infer or guess — only include relationships clearly stated in the article.
+
+Each object must have:
+- "company1": string (exact name from the list above)
+- "company2": string (exact name from the list above)
+- "description": string (1-2 sentence description of the relationship from this article)
+- "company1PartnerType": "Fortune500Global" | "Fortune500Global" | "CryptoNative" (classify company1: Fortune500Global if it's a major US public/Fortune 500 company, Fortune500Global if it's a major non-US global enterprise, CryptoNative if it's a crypto/blockchain-native company)
+- "company2PartnerType": "Fortune500Global" | "Fortune500Global" | "CryptoNative" (same classification for company2)
+- "date": string (YYYY-MM-DD of the announcement if mentioned, otherwise omit)
+
+If no formal relationships are clearly stated, return an empty array [].
+RETURN ONLY RAW JSON ARRAY.`;
+
+  try {
+    return await executeWithRetry('analyzeNewsRelationships', async () => {
+      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.2);
+      const json = parseJSON(text);
+      if (!Array.isArray(json)) return [];
+      return json.filter((r: any) =>
+        r &&
+        typeof r.company1 === 'string' && mentionedCompanies.includes(r.company1) &&
+        typeof r.company2 === 'string' && mentionedCompanies.includes(r.company2) &&
+        typeof r.description === 'string' &&
+        ['Fortune500Global', 'Fortune500Global', 'CryptoNative'].includes(r.company1PartnerType) &&
+        ['Fortune500Global', 'Fortune500Global', 'CryptoNative'].includes(r.company2PartnerType)
+      );
+    });
+  } catch (error) {
+    console.error('analyzeNewsRelationships failed:', error);
+    return [];
   }
 };

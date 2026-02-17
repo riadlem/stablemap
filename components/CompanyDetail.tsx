@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { Company, Job, Partner, CompanyFocus, NewsItem } from '../types';
-import { ArrowLeft, Briefcase, Handshake, ExternalLink, Share2, Sparkles, Building, MapPin, Building2, Globe, RefreshCw, Trash2, Edit2, Check, X, Newspaper, Plus, Flag, Ban, DollarSign, TrendingUp, Users, UserPlus } from 'lucide-react';
+import { ArrowLeft, Briefcase, Handshake, ExternalLink, Share2, Sparkles, Building, MapPin, Building2, Globe, RefreshCw, Trash2, Edit2, Check, X, Newspaper, Plus, Flag, Ban, DollarSign, TrendingUp, Users, UserPlus, Tag } from 'lucide-react';
 import { findJobOpenings } from "../services/claudeService";
 import { isJobRecent } from '../constants';
 import AddNewsModal from './AddNewsModal';
@@ -153,9 +153,8 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
   };
 
   // Filter partners by type - Merged Enterprise
-  const enterprisePartners = company.partners.filter(p => 
-    p.type === 'Fortune500USA' || 
-    p.type === 'Fortune500Global' || 
+  const enterprisePartners = company.partners.filter(p =>
+    p.type === 'Fortune500Global' ||
     p.type === 'Fortune500' as any
   );
   const cryptoPartners = company.partners.filter(p => p.type === 'CryptoNative');
@@ -240,6 +239,16 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
                  {company.headquarters && (
                    <span className="flex items-center gap-1 text-slate-500 text-sm mr-2">
                      <MapPin size={14} /> {company.headquarters}
+                   </span>
+                 )}
+                 {company.country && (
+                   <span className="flex items-center gap-1 bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-xs font-medium">
+                     <Globe size={11} /> {company.country}
+                   </span>
+                 )}
+                 {company.industry && (
+                   <span className="flex items-center gap-1 bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded text-xs font-medium">
+                     <Tag size={11} /> {company.industry}
                    </span>
                  )}
                  {company.categories.map(c => (
@@ -371,7 +380,6 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
                         <div className="flex justify-between items-start">
                           <div className="font-semibold text-slate-900 text-sm">{p.name}</div>
                           <div className="flex items-center gap-2">
-                            {p.type === 'Fortune500USA' && <span className="text-[9px] text-slate-400 font-bold uppercase">USA</span>}
                             {p.type === 'Fortune500Global' && <span className="text-[9px] text-slate-400 font-bold uppercase">Global</span>}
                             {allCompanyIds && onAddCompanyToDirectory && (
                               inDirectory ? (
