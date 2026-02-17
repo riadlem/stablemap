@@ -1,5 +1,6 @@
 
 import { Company, Partner, Job, NewsItem, Category } from '../types';
+import { logger } from './logger';
 
 // --- CONFIGURATION ---
 
@@ -28,6 +29,7 @@ const callClaude = async (
   systemPrompt?: string,
   temperature: number = 0.7
 ): Promise<string> => {
+  const start = Date.now();
   const body: any = {
     model: CLAUDE_MODEL,
     max_tokens: 4096,
@@ -39,25 +41,34 @@ const callClaude = async (
     body.system = systemPrompt;
   }
 
+  logger.info('claude', `Calling Claude (${CLAUDE_MODEL})`, prompt.substring(0, 120) + '...');
+
   const response = await fetch(API_PROXY_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
 
+  const duration = Date.now() - start;
+  logger.api('POST', API_PROXY_URL, response.status, duration);
+
   if (!response.ok) {
     const errText = await response.text();
+    logger.error('claude', `Claude API error ${response.status}`, errText);
     throw new Error(`API Error ${response.status}: ${errText}`);
   }
 
   const data: ClaudeResponse = await response.json();
 
   if (data.error) {
+    logger.error('claude', `Claude returned error`, data.error.message);
     throw new Error(`Claude Error: ${data.error.message}`);
   }
 
   const textBlocks = (data.content || []).filter((b) => b.type === 'text');
-  return textBlocks.map((b) => b.text || '').join('\n');
+  const result = textBlocks.map((b) => b.text || '').join('\n');
+  logger.info('claude', `Claude response received (${result.length} chars, ${duration}ms)`);
+  return result;
 };
 
 // --- RETRY WRAPPER ---
@@ -118,16 +129,20 @@ const parseJSON = (text: string): any => {
 const fetchUrlContent = async (
   url: string
 ): Promise<{ title: string; content: string } | null> => {
+  const start = Date.now();
   try {
     const response = await fetch(FETCH_URL_ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url }),
     });
+    const duration = Date.now() - start;
+    logger.api('POST', FETCH_URL_ENDPOINT, response.status, duration, url);
     if (!response.ok) return null;
     const data = await response.json();
     return { title: data.title || '', content: data.content || '' };
-  } catch {
+  } catch (err: any) {
+    logger.error('api', `fetchUrlContent failed for ${url}`, err?.message || String(err));
     return null;
   }
 };
@@ -147,16 +162,28 @@ const fetchNewsFromAPI = async (
   query: string,
   from?: string
 ): Promise<NewsAPIArticle[]> => {
+  const start = Date.now();
+  logger.info('news', `Fetching news from API`, `query="${query}" from=${from || 'none'}`);
   try {
     const response = await fetch(NEWS_API_ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query, from, pageSize: 20 }),
     });
-    if (!response.ok) return [];
+    const duration = Date.now() - start;
+    logger.api('POST', NEWS_API_ENDPOINT, response.status, duration);
+    if (!response.ok) {
+      const errText = await response.text();
+      logger.error('news', `News API returned ${response.status}`, errText);
+      return [];
+    }
     const data = await response.json();
+    const count = (data.articles || []).length;
+    logger.info('news', `News API returned ${count} articles (total: ${data.totalResults || 0})`);
     return data.articles || [];
-  } catch {
+  } catch (err: any) {
+    const duration = Date.now() - start;
+    logger.error('news', `News API fetch failed (${duration}ms)`, err?.message || String(err));
     return [];
   }
 };
@@ -336,6 +363,7 @@ RETURN ONLY RAW JSON.`;
 export const fetchIndustryNews = async (
   directoryCompanies: string[] = []
 ): Promise<NewsItem[]> => {
+  logger.info('news', `fetchIndustryNews called with ${directoryCompanies.length} companies`);
   // Step 1: Try to get real news from NewsAPI
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -345,6 +373,7 @@ export const fetchIndustryNews = async (
   const apiArticles = await fetchNewsFromAPI(searchQuery, fromDate);
 
   if (apiArticles.length > 0) {
+    logger.info('news', `Got ${apiArticles.length} articles from NewsAPI, mapping to companies`);
     // We have real news — match against tracked companies
     const companySet = directoryCompanies.map((c) => c.toLowerCase());
 
@@ -370,6 +399,7 @@ export const fetchIndustryNews = async (
   }
 
   // Step 2: Fallback to Claude's knowledge when NewsAPI is unavailable
+  logger.warn('news', 'NewsAPI returned 0 articles, falling back to Claude');
   const companiesList = directoryCompanies.slice(0, 30).join(', ');
   const prompt = `Based on your knowledge, provide notable strategic developments and milestones in the stablecoin, digital asset, and enterprise blockchain space.
 
@@ -405,8 +435,8 @@ RETURN ONLY RAW JSON ARRAY.`;
           relatedCompanies: Array.isArray(item.relatedCompanies) ? item.relatedCompanies : [],
         }));
     });
-  } catch (error) {
-    console.error('fetchIndustryNews failed:', error);
+  } catch (error: any) {
+    logger.error('news', 'fetchIndustryNews failed completely', error?.message || String(error));
     return [];
   }
 };

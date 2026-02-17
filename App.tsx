@@ -10,13 +10,15 @@ import {
   Briefcase,
   Globe,
   AlertTriangle,
-  Zap
+  Zap,
+  ScrollText
 } from 'lucide-react';
 import CompanyList from './components/CompanyList';
 import CompanyDetail from './components/CompanyDetail';
 import GlobalPartnershipMatrix from './components/GlobalPartnershipMatrix';
 import Intelligence from './components/Intelligence';
 import JobBoard from './components/JobBoard';
+import Logs from './components/Logs';
 import ShareModal from './components/ShareModal';
 import { Company, Partner, NewsItem, Category } from './types';
 import { enrichCompanyData, scanForNewPartnerships, recommendMissingCompanies, getCurrentModelName } from "./services/claudeService";
@@ -26,7 +28,8 @@ enum View {
   DIRECTORY = 'Directory',
   PARTNERSHIPS_GLOBAL = 'PartnershipsGlobal',
   INTELLIGENCE = 'Intelligence',
-  JOBS = 'Jobs'
+  JOBS = 'Jobs',
+  LOGS = 'Logs'
 }
 
 const SCAN_INTERVAL_MS = 24 * 60 * 60 * 1000; 
@@ -357,6 +360,7 @@ const App: React.FC = () => {
       case View.PARTNERSHIPS_GLOBAL: return <GlobalPartnershipMatrix companies={companies} />;
       case View.INTELLIGENCE: return <Intelligence directoryCompanies={companies.map(c => c.name)} />;
       case View.JOBS: return <JobBoard companies={companies} onUpdateCompanies={handleCompaniesUpdate} />;
+      case View.LOGS: return <Logs onBack={() => setCurrentView(View.DIRECTORY)} />;
       default: return <div>View not found</div>;
     }
   };
@@ -410,8 +414,17 @@ const App: React.FC = () => {
            <button onClick={() => setSidebarOpen(!isSidebarOpen)} className="p-2 hover:bg-slate-800 rounded-lg text-slate-400"><Menu size={20} /></button>
         </div>
       </aside>
-      <main className={`flex-1 transition-all duration-300 ${isSidebarOpen ? 'ml-64' : 'ml-20'} p-8 pt-12`}>
-         <div className="max-w-7xl mx-auto">{renderContent()}</div>
+      <main className={`flex-1 transition-all duration-300 ${isSidebarOpen ? 'ml-64' : 'ml-20'} p-8 pt-12 flex flex-col min-h-screen`}>
+         <div className="max-w-7xl mx-auto flex-1">{renderContent()}</div>
+         <footer className="max-w-7xl mx-auto w-full border-t border-slate-200 mt-12 pt-4 pb-6 flex items-center justify-between">
+           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">StableMap Intelligence Platform</span>
+           <button
+             onClick={() => { setCurrentView(View.LOGS); setSelectedCompany(null); }}
+             className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest hover:text-indigo-600 transition-colors"
+           >
+             <ScrollText size={12} /> System Logs
+           </button>
+         </footer>
       </main>
       <ShareModal isOpen={isShareModalOpen} onClose={() => setShareModalOpen(false)} company={companyToShare} />
     </div>
