@@ -360,7 +360,7 @@ const App: React.FC = () => {
       case View.PARTNERSHIPS_GLOBAL: return <GlobalPartnershipMatrix companies={companies} />;
       case View.INTELLIGENCE: return <Intelligence directoryCompanies={companies.map(c => c.name)} />;
       case View.JOBS: return <JobBoard companies={companies} onUpdateCompanies={handleCompaniesUpdate} />;
-      case View.LOGS: return <Logs onBack={() => setCurrentView(View.DIRECTORY)} />;
+      case View.LOGS: return <Logs onBack={() => setCurrentView(View.DIRECTORY)} companies={companies} />;
       default: return <div>View not found</div>;
     }
   };
@@ -390,6 +390,9 @@ const App: React.FC = () => {
           </button>
           <button onClick={() => { setCurrentView(View.JOBS); setSelectedCompany(null); }} className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg transition-colors ${currentView === View.JOBS ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800'}`}>
             <Briefcase size={20} /> {isSidebarOpen && <span>Job Board</span>}
+          </button>
+          <button onClick={() => { setCurrentView(View.LOGS); setSelectedCompany(null); }} className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg transition-colors ${currentView === View.LOGS ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800'}`}>
+            <ScrollText size={20} /> {isSidebarOpen && <span>System Logs</span>}
           </button>
         </nav>
         <div className="p-4 border-t border-slate-800 text-xs">
