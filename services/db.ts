@@ -103,7 +103,27 @@ const isWithinLast12Months = (dateString: string): boolean => {
 };
 
 // State to track if we should force offline mode due to errors
+// Recovers automatically after a cooldown so transient failures don't permanently disable Firestore
 let isOfflineMode = !isConfigured;
+let offlineSince = 0;
+const OFFLINE_COOLDOWN_MS = 30_000; // Retry Firestore after 30 seconds
+
+const checkOffline = (): boolean => {
+  if (!isConfigured || !dbInstance) return true;
+  if (!isOfflineMode) return false;
+  // Auto-recover after cooldown
+  if (Date.now() - offlineSince > OFFLINE_COOLDOWN_MS) {
+    isOfflineMode = false;
+    console.log('[DB] Retrying Firestore connection after cooldown...');
+    return false;
+  }
+  return true;
+};
+
+const goOffline = () => {
+  isOfflineMode = true;
+  offlineSince = Date.now();
+};
 
 export const db = {
   /**
@@ -113,20 +133,18 @@ export const db = {
     let companies: Company[] = [];
 
     // --- FIREBASE MODE ---
-    if (!isOfflineMode && dbInstance) {
+    if (!checkOffline()) {
       try {
         const companyCollection = collection(dbInstance, COLLECTIONS.COMPANIES);
-        // Use timeout for reads too
-        const snapshot = await withTimeout<QuerySnapshot<DocumentData>>(getDocs(companyCollection), 3000);
+        const snapshot = await withTimeout<QuerySnapshot<DocumentData>>(getDocs(companyCollection), 5000);
 
         if (!snapshot.empty) {
           companies = snapshot.docs.map(doc => {
             const raw = doc.data();
             const normalized = normalizeDates(raw);
-            return { 
-              ...normalized, 
+            return {
+              ...normalized,
               id: doc.id,
-              // ENFORCE ARRAYS to prevent 'map of undefined' errors
               categories: Array.isArray(normalized.categories) ? normalized.categories : [],
               partners: Array.isArray(normalized.partners) ? normalized.partners : [],
               jobs: Array.isArray(normalized.jobs) ? normalized.jobs : []
@@ -135,12 +153,12 @@ export const db = {
           console.log(`[DB] Loaded ${companies.length} companies from Firestore.`);
         } else {
           console.log('[DB] Firestore empty. Seeding initial MOCK data...');
-          await this.saveCompanies(MOCK_COMPANIES); 
+          await this.saveCompanies(MOCK_COMPANIES);
           return MOCK_COMPANIES;
         }
       } catch (error: any) {
         console.warn("[DB] Error/Timeout fetching companies from Firestore (falling back to local storage):", error.message);
-        isOfflineMode = true;
+        goOffline();
       }
     }
 
@@ -179,30 +197,30 @@ export const db = {
   },
 
   /**
-   * Save companies (Upsert)
+   * Save companies (Upsert) — batches in chunks of 400 to stay under Firestore's 500 limit
    */
   async saveCompanies(companies: Company[]): Promise<void> {
     // --- FIREBASE MODE ---
-    if (!isOfflineMode && dbInstance) {
+    if (!checkOffline()) {
       try {
-        const batch = writeBatch(dbInstance);
-        
-        companies.forEach(company => {
-          const docRef = doc(dbInstance, COLLECTIONS.COMPANIES, company.id);
-          const safeData = sanitizeForFirestore(company);
-          batch.set(docRef, safeData, { merge: true });
-        });
-        
-        await withTimeout(batch.commit(), 3000);
+        const BATCH_SIZE = 400;
+        for (let i = 0; i < companies.length; i += BATCH_SIZE) {
+          const chunk = companies.slice(i, i + BATCH_SIZE);
+          const batch = writeBatch(dbInstance);
+          chunk.forEach(company => {
+            const docRef = doc(dbInstance, COLLECTIONS.COMPANIES, company.id);
+            batch.set(docRef, sanitizeForFirestore(company), { merge: true });
+          });
+          await withTimeout(batch.commit(), 8000);
+        }
         console.log(`[DB] Saved ${companies.length} companies to Firestore.`);
       } catch (error: any) {
         console.error("[DB] Error saving companies to Firestore:", error.message);
-        isOfflineMode = true; // Switch to offline on write failure too
+        goOffline();
       }
     }
 
     // --- LOCAL STORAGE MODE ---
-    // Always save to local storage as backup/cache
     try {
       localStorage.setItem(LS_KEYS.COMPANIES, JSON.stringify(companies));
     } catch (e) {
@@ -215,15 +233,14 @@ export const db = {
    */
   async deleteCompany(companyId: string): Promise<void> {
     // --- FIREBASE MODE ---
-    if (!isOfflineMode && dbInstance) {
+    if (!checkOffline()) {
       try {
         const docRef = doc(dbInstance, COLLECTIONS.COMPANIES, companyId);
-        // CRITICAL: Add timeout to prevent hanging UI if keys are bad or network is weird
-        await withTimeout(deleteDoc(docRef), 2000);
+        await withTimeout(deleteDoc(docRef), 3000);
         console.log(`[DB] Deleted company ${companyId} from Firestore.`);
       } catch (error: any) {
-        console.error("[DB] Error deleting company from Firestore (switching to offline):", error.message);
-        isOfflineMode = true; 
+        console.error("[DB] Error deleting company from Firestore:", error.message);
+        goOffline();
       }
     }
 
@@ -251,10 +268,10 @@ export const db = {
     let items: NewsItem[] = [];
 
     // --- FIREBASE MODE ---
-    if (!isOfflineMode && dbInstance) {
+    if (!checkOffline()) {
       try {
         const newsCollection = collection(dbInstance, COLLECTIONS.NEWS);
-        const snapshot = await withTimeout<QuerySnapshot<DocumentData>>(getDocs(newsCollection), 3000);
+        const snapshot = await withTimeout<QuerySnapshot<DocumentData>>(getDocs(newsCollection), 5000);
 
         if (snapshot.empty) {
           await this.saveNews(MOCK_NEWS);
@@ -263,8 +280,8 @@ export const db = {
           items = snapshot.docs.map(doc => {
              const raw = doc.data();
              const normalized = normalizeDates(raw);
-             return { 
-               ...normalized, 
+             return {
+               ...normalized,
                id: doc.id,
                relatedCompanies: Array.isArray(normalized.relatedCompanies) ? normalized.relatedCompanies : []
              } as NewsItem;
@@ -272,7 +289,7 @@ export const db = {
         }
       } catch (error: any) {
         console.warn("[DB] Error fetching news from Firestore:", error.message);
-        isOfflineMode = true;
+        goOffline();
       }
     }
 
@@ -302,18 +319,17 @@ export const db = {
     const validNews = news.filter(n => isWithinLast12Months(n.date));
 
     // --- FIREBASE MODE ---
-    if (!isOfflineMode && dbInstance) {
+    if (!checkOffline()) {
       try {
         const batch = writeBatch(dbInstance);
         validNews.forEach(item => {
           const docRef = doc(dbInstance, COLLECTIONS.NEWS, item.id);
-          const safeData = sanitizeForFirestore(item);
-          batch.set(docRef, safeData, { merge: true });
+          batch.set(docRef, sanitizeForFirestore(item), { merge: true });
         });
-        await withTimeout(batch.commit(), 3000);
+        await withTimeout(batch.commit(), 5000);
       } catch (error: any) {
         console.error("[DB] Error saving news:", error.message);
-        isOfflineMode = true;
+        goOffline();
       }
     }
 
@@ -338,10 +354,10 @@ export const db = {
    */
   async getLastScanTime(): Promise<number> {
      // --- FIREBASE MODE ---
-     if (!isOfflineMode && dbInstance) {
+     if (!checkOffline()) {
        try {
          const docRef = doc(dbInstance, COLLECTIONS.SYSTEM, 'meta');
-         const docSnap = await withTimeout<DocumentSnapshot<DocumentData>>(getDoc(docRef), 2000);
+         const docSnap = await withTimeout<DocumentSnapshot<DocumentData>>(getDoc(docRef), 3000);
          if (docSnap.exists()) {
            const data = docSnap.data();
            return data?.lastScanTime || 0;
@@ -362,7 +378,7 @@ export const db = {
    */
   async saveLastScanTime(time: number): Promise<void> {
     // --- FIREBASE MODE ---
-    if (!isOfflineMode && dbInstance) {
+    if (!checkOffline()) {
       try {
         const docRef = doc(dbInstance, COLLECTIONS.SYSTEM, 'meta');
         await setDoc(docRef, { lastScanTime: time }, { merge: true });
@@ -382,13 +398,13 @@ export const db = {
     const docId = data.rank.toString();
 
     // --- FIREBASE MODE ---
-    if (!isOfflineMode && dbInstance) {
+    if (!checkOffline()) {
       try {
         const docRef = doc(dbInstance, COLLECTIONS.GLOBAL500, docId);
         await withTimeout(setDoc(docRef, sanitizeForFirestore(data), { merge: true }), 3000);
       } catch (e: any) {
         console.error("[DB] Error saving global activity:", e.message);
-        isOfflineMode = true;
+        goOffline();
       }
     }
 
@@ -410,17 +426,17 @@ export const db = {
     let dataMap: Record<string, Global500ResearchData> = {};
 
     // --- FIREBASE MODE ---
-    if (!isOfflineMode && dbInstance) {
+    if (!checkOffline()) {
       try {
         const gCollection = collection(dbInstance, COLLECTIONS.GLOBAL500);
-        const snapshot = await withTimeout<QuerySnapshot<DocumentData>>(getDocs(gCollection), 3000);
+        const snapshot = await withTimeout<QuerySnapshot<DocumentData>>(getDocs(gCollection), 5000);
         snapshot.forEach(doc => {
            dataMap[doc.id] = normalizeDates(doc.data()) as Global500ResearchData;
         });
         return dataMap;
       } catch (e: any) {
         console.warn("[DB] Error fetching global activity:", e.message);
-        isOfflineMode = true;
+        goOffline();
       }
     }
 
@@ -443,10 +459,10 @@ export const db = {
   async getLists(): Promise<CompanyListType[]> {
     let lists: CompanyListType[] = [];
 
-    if (!isOfflineMode && dbInstance) {
+    if (!checkOffline()) {
       try {
         const listsCollection = collection(dbInstance, COLLECTIONS.LISTS);
-        const snapshot = await withTimeout<QuerySnapshot<DocumentData>>(getDocs(listsCollection), 3000);
+        const snapshot = await withTimeout<QuerySnapshot<DocumentData>>(getDocs(listsCollection), 5000);
         if (!snapshot.empty) {
           lists = snapshot.docs.map(d => {
             const raw = d.data();
@@ -457,7 +473,7 @@ export const db = {
         }
       } catch (e: any) {
         console.warn("[DB] Error fetching lists from Firestore:", e.message);
-        isOfflineMode = true;
+        goOffline();
       }
     }
 
@@ -476,13 +492,13 @@ export const db = {
    * Save a single company list (upsert)
    */
   async saveList(list: CompanyListType): Promise<void> {
-    if (!isOfflineMode && dbInstance) {
+    if (!checkOffline()) {
       try {
         const docRef = doc(dbInstance, COLLECTIONS.LISTS, list.id);
         await withTimeout(setDoc(docRef, sanitizeForFirestore(list), { merge: true }), 3000);
       } catch (e: any) {
         console.error("[DB] Error saving list:", e.message);
-        isOfflineMode = true;
+        goOffline();
       }
     }
 
@@ -499,13 +515,13 @@ export const db = {
    * Delete a company list
    */
   async deleteList(listId: string): Promise<void> {
-    if (!isOfflineMode && dbInstance) {
+    if (!checkOffline()) {
       try {
         const docRef = doc(dbInstance, COLLECTIONS.LISTS, listId);
-        await withTimeout(deleteDoc(docRef), 2000);
+        await withTimeout(deleteDoc(docRef), 3000);
       } catch (e: any) {
         console.error("[DB] Error deleting list:", e.message);
-        isOfflineMode = true;
+        goOffline();
       }
     }
 
