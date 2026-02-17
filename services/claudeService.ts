@@ -202,7 +202,7 @@ export const enrichCompanyData = async (
 I need a JSON object with these fields:
 - "description": string (2-3 sentence company overview)
 - "categories": string[] (from: "Issuer", "Infrastructure", "Wallet", "Payments", "DeFi", "Custody", "Banks")
-- "partners": array of objects with { "name": string, "type": "Fortune500Global" | "Fortune500Global" | "CryptoNative", "description": string, "date": string (YYYY-MM-DD if known), "sourceUrl": string (if known) }
+- "partners": array of objects with { "name": string, "type": "Fortune500Global" | "CryptoNative", "description": string, "date": string (YYYY-MM-DD if known), "sourceUrl": string (if known), "country": string (HQ country, e.g. "USA", "Germany", "Japan"), "region": "North America" | "Europe" | "APAC" | "LATAM" | "MEA" | "Global", "industry": string (e.g. "Financial Services", "Automotive", "Technology", "Energy", "Electronics") }
 - "website": string (official URL)
 - "headquarters": string (City, Country)
 - "country": string (country of HQ, e.g. "USA", "Germany", "Singapore", "United Kingdom")
@@ -456,10 +456,13 @@ EXCLUDE these already-known partners: ${existingPartnerNames.join(', ')}
 
 Return a JSON array of partnership objects with:
 - "name": string (partner company name)
-- "type": "Fortune500Global" | "Fortune500Global" | "CryptoNative"
+- "type": "Fortune500Global" | "CryptoNative"
 - "description": string (what the partnership involves)
 - "date": string (YYYY-MM-DD of announcement, use your best knowledge)
 - "sourceUrl": string (empty string if not known)
+- "country": string (partner HQ country, e.g. "USA", "Germany", "Japan")
+- "region": "North America" | "Europe" | "APAC" | "LATAM" | "MEA" | "Global"
+- "industry": string (partner primary industry, e.g. "Financial Services", "Automotive", "Technology")
 
 IMPORTANT: Only include partnerships you are confident actually exist. Do NOT fabricate partnerships. If you don't know of any beyond the excluded list, return an empty array [].
 RETURN ONLY RAW JSON ARRAY.`;
@@ -596,8 +599,8 @@ export interface NewsRelationship {
   company1: string;
   company2: string;
   description: string;
-  company1PartnerType: 'Fortune500Global' | 'Fortune500Global' | 'CryptoNative';
-  company2PartnerType: 'Fortune500Global' | 'Fortune500Global' | 'CryptoNative';
+  company1PartnerType: 'Fortune500Global' | 'CryptoNative';
+  company2PartnerType: 'Fortune500Global' | 'CryptoNative';
   date?: string;
 }
 
@@ -621,8 +624,8 @@ Each object must have:
 - "company1": string (exact name from the list above)
 - "company2": string (exact name from the list above)
 - "description": string (1-2 sentence description of the relationship from this article)
-- "company1PartnerType": "Fortune500Global" | "Fortune500Global" | "CryptoNative" (classify company1: Fortune500Global if it's a major US public/Fortune 500 company, Fortune500Global if it's a major non-US global enterprise, CryptoNative if it's a crypto/blockchain-native company)
-- "company2PartnerType": "Fortune500Global" | "Fortune500Global" | "CryptoNative" (same classification for company2)
+- "company1PartnerType": "Fortune500Global" | "CryptoNative" (classify company1: Fortune500Global if it's a major global enterprise or Fortune 500 company, CryptoNative if it's a crypto/blockchain-native company)
+- "company2PartnerType": "Fortune500Global" | "CryptoNative" (same classification for company2)
 - "date": string (YYYY-MM-DD of the announcement if mentioned, otherwise omit)
 
 If no formal relationships are clearly stated, return an empty array [].
@@ -638,8 +641,8 @@ RETURN ONLY RAW JSON ARRAY.`;
         typeof r.company1 === 'string' && mentionedCompanies.includes(r.company1) &&
         typeof r.company2 === 'string' && mentionedCompanies.includes(r.company2) &&
         typeof r.description === 'string' &&
-        ['Fortune500Global', 'Fortune500Global', 'CryptoNative'].includes(r.company1PartnerType) &&
-        ['Fortune500Global', 'Fortune500Global', 'CryptoNative'].includes(r.company2PartnerType)
+        ['Fortune500Global', 'CryptoNative'].includes(r.company1PartnerType) &&
+        ['Fortune500Global', 'CryptoNative'].includes(r.company2PartnerType)
       );
     });
   } catch (error) {

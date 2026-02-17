@@ -397,6 +397,13 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
                           </div>
                         </div>
                         <div className="text-xs text-slate-600 mt-1">{p.description}</div>
+                        {(p.country || p.industry) && (
+                          <div className="flex items-center gap-2 mt-1.5">
+                            {p.country && <span className="text-[9px] text-slate-400 font-medium">{p.country}{p.region ? ` (${p.region})` : ''}</span>}
+                            {p.country && p.industry && <span className="text-[9px] text-slate-300">|</span>}
+                            {p.industry && <span className="text-[9px] text-indigo-400 font-medium">{p.industry}</span>}
+                          </div>
+                        )}
                       </li>
                     );
                   })}

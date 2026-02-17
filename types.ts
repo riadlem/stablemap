@@ -17,6 +17,9 @@ export interface Partner {
   description: string;
   date?: string; // Date of announcement
   sourceUrl?: string; // Link to press release
+  country?: string; // e.g., "USA", "Germany", "Japan"
+  region?: 'North America' | 'Europe' | 'APAC' | 'LATAM' | 'MEA' | 'Global';
+  industry?: string; // e.g., "Financial Services", "Automotive", "Energy"
 }
 
 export interface FundingInfo {
