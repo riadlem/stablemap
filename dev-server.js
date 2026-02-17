@@ -49,7 +49,7 @@ const server = http.createServer(async (req, res) => {
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
+        'anthropic-version': '2024-10-22',
       },
       body: JSON.stringify(anthropicBody),
     });
