@@ -1,8 +1,9 @@
 
-import React, { useState, useMemo } from 'react';
-import { Company, Job, Partner, CompanyFocus, NewsItem } from '../types';
+import React, { useState, useMemo, useEffect } from 'react';
+import { Company, Job, Partner, CompanyFocus, NewsItem, classifyNewsSourceType, NewsSourceType } from '../types';
 import { ArrowLeft, Briefcase, Handshake, ExternalLink, Share2, Sparkles, Building, MapPin, Building2, Globe, RefreshCw, Trash2, Edit2, Check, X, Newspaper, Plus, Flag, Ban, DollarSign, TrendingUp, Users, UserPlus, Tag } from 'lucide-react';
 import { findJobOpenings } from "../services/claudeService";
+import { db } from '../services/db';
 import { isJobRecent } from '../constants';
 import AddNewsModal from './AddNewsModal';
 import JobDetailModal from './JobDetailModal';
@@ -63,11 +64,33 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
   // Partner add-to-directory state
   const [addingPartner, setAddingPartner] = useState<string | null>(null);
 
-  // Combine fetched news (from company.recentNews) if available
-  const displayNews = useMemo(() => {
-      // Sort news if available
-      return (company.recentNews || []).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [company.recentNews]);
+  // News: company.recentNews merged with global store items that mention this company
+  const [displayNews, setDisplayNews] = useState<NewsItem[]>(
+    (company.recentNews || []).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+  );
+
+  useEffect(() => {
+    const nameLower = company.name.toLowerCase();
+    db.getNews().then(globalNews => {
+      const matching = globalNews.filter(n =>
+        n.relatedCompanies.some(rc => rc.toLowerCase() === nameLower)
+      );
+      const base = company.recentNews || [];
+      const seenIds = new Set(base.map(n => n.id));
+      const merged = [...base];
+      matching.forEach(n => {
+        if (!seenIds.has(n.id)) {
+          seenIds.add(n.id);
+          merged.push(n);
+        }
+      });
+      merged.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      setDisplayNews(merged);
+    }).catch(() => {
+      // Fallback: just use recentNews
+      setDisplayNews((company.recentNews || []).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+    });
+  }, [company.id, company.name, company.recentNews]);
 
   const fetchJobs = async () => {
     setLoadingJobs(true);
@@ -158,6 +181,7 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
     p.type === 'Fortune500' as any
   );
   const cryptoPartners = company.partners.filter(p => p.type === 'CryptoNative');
+  const investorPartners = company.partners.filter(p => p.type === 'Investor');
 
   // Domain extraction for fallback
   const getDomain = () => {
@@ -364,6 +388,30 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
                 </div>
             )}
 
+            {/* Investor Partners */}
+            {investorPartners.length > 0 && (
+              <div className="col-span-full">
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-5">
+                  <h3 className="text-sm font-bold text-amber-900 mb-4 flex items-center gap-2 uppercase tracking-wide">
+                    <TrendingUp size={16} className="text-amber-600" /> Investors & Backers
+                  </h3>
+                  <div className="flex flex-wrap gap-3">
+                    {investorPartners.map((p, idx) => (
+                      <div key={idx} className="bg-white border border-amber-200 rounded-lg px-3 py-2 shadow-sm min-w-[160px]">
+                        <div className="font-semibold text-slate-900 text-sm">{p.name}</div>
+                        {p.description && (
+                          <div className="text-xs text-slate-500 mt-0.5">{p.description}</div>
+                        )}
+                        {p.date && (
+                          <div className="text-[10px] text-amber-600 font-medium mt-1">{p.date}</div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Fortune 500 & Enterprise Column (Merged) */}
             <div className="bg-slate-50 p-5 rounded-xl border border-slate-200">
               <h3 className="text-sm font-bold text-slate-900 mb-4 flex items-center gap-2 uppercase tracking-wide">
@@ -397,6 +445,13 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
                           </div>
                         </div>
                         <div className="text-xs text-slate-600 mt-1">{p.description}</div>
+                        {(p.country || p.industry) && (
+                          <div className="flex items-center gap-2 mt-1.5">
+                            {p.country && <span className="text-[9px] text-slate-400 font-medium">{p.country}{p.region ? ` (${p.region})` : ''}</span>}
+                            {p.country && p.industry && <span className="text-[9px] text-slate-300">|</span>}
+                            {p.industry && <span className="text-[9px] text-indigo-400 font-medium">{p.industry}</span>}
+                          </div>
+                        )}
                       </li>
                     );
                   })}
@@ -466,9 +521,27 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
                        {displayNews.map(item => (
                            <div key={item.id} className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-all group">
                                 <div className="flex justify-between items-start mb-2">
-                                    <span className="text-[10px] font-bold bg-slate-100 text-slate-600 px-2 py-1 rounded uppercase tracking-wide">
-                                        {item.source}
-                                    </span>
+                                    {(() => {
+                                        const st = classifyNewsSourceType(item);
+                                        const colors: Record<NewsSourceType, string> = {
+                                            press: 'bg-blue-50 text-blue-700 border-blue-100',
+                                            press_release: 'bg-amber-50 text-amber-700 border-amber-100',
+                                            partnership: 'bg-emerald-50 text-emerald-700 border-emerald-100',
+                                        };
+                                        const labels: Record<NewsSourceType, string> = { press: 'Press', press_release: 'Press Release', partnership: 'Partnership' };
+                                        return (
+                                            <div className="flex items-center gap-1.5">
+                                                <span className={`text-[10px] font-bold px-2 py-1 rounded uppercase tracking-wide border ${colors[st]}`}>
+                                                    {labels[st]}
+                                                </span>
+                                                {item.source && !['Directory Intelligence', 'Intelligence', 'Manual Entry'].includes(item.source) && (
+                                                    <span className="text-[10px] font-bold bg-slate-100 text-slate-500 px-2 py-1 rounded uppercase tracking-wide">
+                                                        {item.source}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        );
+                                    })()}
                                     <span className="text-slate-400 text-xs font-medium">{item.date}</span>
                                 </div>
                                 <h4 className="text-base font-bold text-slate-900 mb-2 group-hover:text-indigo-600 transition-colors">

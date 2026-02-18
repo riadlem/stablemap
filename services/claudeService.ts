@@ -202,7 +202,8 @@ export const enrichCompanyData = async (
 I need a JSON object with these fields:
 - "description": string (2-3 sentence company overview)
 - "categories": string[] (from: "Issuer", "Infrastructure", "Wallet", "Payments", "DeFi", "Custody", "Banks")
-- "partners": array of objects with { "name": string, "type": "Fortune500Global" | "Fortune500Global" | "CryptoNative", "description": string, "date": string (YYYY-MM-DD if known), "sourceUrl": string (if known) }
+- "partners": array of objects with { "name": string, "type": "Fortune500Global" | "CryptoNative" | "Investor", "description": string, "date": string (YYYY-MM-DD if known), "sourceUrl": string (if known), "country": string (HQ country, e.g. "USA", "Germany", "Japan"), "region": "North America" | "Europe" | "APAC" | "LATAM" | "MEA" | "Global", "industry": string (e.g. "Financial Services", "Automotive", "Technology", "Energy", "Electronics") }
+  (use type "Investor" for VC firms, PE firms, and investment funds that have invested in the company; use "Fortune500Global" for enterprise/corporate partners; use "CryptoNative" for crypto-native company partners)
 - "website": string (official URL)
 - "headquarters": string (City, Country)
 - "country": string (country of HQ, e.g. "USA", "Germany", "Singapore", "United Kingdom")
@@ -399,6 +400,7 @@ export const fetchIndustryNews = async (
           summary: article.summary,
           url: article.url || '#',
           relatedCompanies,
+          sourceType: 'press' as const,
         };
       });
   }
@@ -438,6 +440,7 @@ RETURN ONLY RAW JSON ARRAY.`;
           summary: item.summary,
           url: typeof item.url === 'string' ? item.url : '#',
           relatedCompanies: Array.isArray(item.relatedCompanies) ? item.relatedCompanies : [],
+          sourceType: 'press_release' as const,
         }));
     });
   } catch (error: any) {
@@ -456,10 +459,13 @@ EXCLUDE these already-known partners: ${existingPartnerNames.join(', ')}
 
 Return a JSON array of partnership objects with:
 - "name": string (partner company name)
-- "type": "Fortune500Global" | "Fortune500Global" | "CryptoNative"
+- "type": "Fortune500Global" | "CryptoNative" | "Investor"
 - "description": string (what the partnership involves)
 - "date": string (YYYY-MM-DD of announcement, use your best knowledge)
 - "sourceUrl": string (empty string if not known)
+- "country": string (partner HQ country, e.g. "USA", "Germany", "Japan")
+- "region": "North America" | "Europe" | "APAC" | "LATAM" | "MEA" | "Global"
+- "industry": string (partner primary industry, e.g. "Financial Services", "Automotive", "Technology")
 
 IMPORTANT: Only include partnerships you are confident actually exist. Do NOT fabricate partnerships. If you don't know of any beyond the excluded list, return an empty array [].
 RETURN ONLY RAW JSON ARRAY.`;
@@ -553,6 +559,145 @@ RETURN ONLY RAW JSON ARRAY.`;
   }
 };
 
+export interface DiscoveredPortfolioCompany {
+  name: string;
+  description: string;
+  category: string;
+  fundingStage?: string;
+  investmentDate?: string;
+}
+
+export const lookupInvestorPortfolio = async (
+  investorName: string,
+  existingCompanyNames: string[]
+): Promise<DiscoveredPortfolioCompany[]> => {
+  const excludeList = existingCompanyNames.length > 0
+    ? `\n\nEXCLUDE these companies already in our directory: ${existingCompanyNames.join(', ')}`
+    : '';
+
+  const prompt = `You are an expert on venture capital, private equity, and investment in the Web3, crypto, and digital asset ecosystem. You have deep knowledge of fund portfolios, including smaller and regional funds.
+
+I want to find ALL portfolio companies of "${investorName}" that are relevant to the broader crypto, Web3, and digital asset space. This includes but is not limited to:
+- Stablecoins and digital asset issuers
+- Blockchain infrastructure and L1/L2 protocols
+- Crypto payments and on/off ramps
+- DeFi protocols and yield platforms
+- Crypto custody and security
+- Web3 applications, NFT platforms, metaverse
+- Tokenization and RWA (real-world assets)
+- Crypto exchanges and trading platforms
+- Blockchain analytics and compliance
+- Digital identity and decentralized identity
+- DAOs and governance tooling
+- Crypto-native fintech and neobanks${excludeList}
+
+First, think about what you know about "${investorName}":
+- Are they a dedicated crypto/Web3 fund, or a generalist with crypto exposure?
+- Do they have a specific Web3 or digital assets vehicle/arm?
+- What investments have been publicly announced or reported?
+
+Then return a JSON array of objects with:
+- "name": string (company name)
+- "description": string (1 sentence — what the company does in the crypto/Web3 space)
+- "category": string (one of: "Issuer", "Infrastructure", "Wallet", "Payments", "DeFi", "Custody", "Banks", "Exchange", "Analytics", "Web3", "Other")
+- "fundingStage": string (e.g. "Seed", "Pre-Seed", "Series A", "Series B", "Growth", "Unknown")
+- "investmentDate": string (YYYY-MM-DD if known, otherwise omit)
+
+Include companies even if the investment details are partial — it is better to surface a real investment with incomplete metadata than to miss it. Only omit a company if you genuinely have no basis to believe "${investorName}" invested in it.
+RETURN ONLY RAW JSON ARRAY.`;
+
+  try {
+    return await executeWithRetry('lookupInvestorPortfolio', async () => {
+      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.5);
+      const json = parseJSON(text);
+      if (!Array.isArray(json)) {
+        console.warn('lookupInvestorPortfolio: Claude returned non-array for', investorName);
+        return [];
+      }
+      return json.filter((c: any) =>
+        c && typeof c.name === 'string' && typeof c.description === 'string'
+      );
+    });
+  } catch (error) {
+    console.error('lookupInvestorPortfolio failed for', investorName, ':', error);
+    return [];
+  }
+};
+
+export const lookupInvestorPortfolioFromUrl = async (
+  url: string,
+  investorName: string,
+  existingCompanyNames: string[]
+): Promise<{ results: DiscoveredPortfolioCompany[]; fetchFailed: boolean }> => {
+  const pageContent = await fetchUrlContent(url);
+
+  if (!pageContent || pageContent.content.length < 50) {
+    logger.warn('api', `Could not fetch content from ${url} (blocked or empty)`);
+    return { results: [], fetchFailed: true };
+  }
+
+  const results = await extractPortfolioFromText(
+    pageContent.content,
+    investorName || undefined,
+    existingCompanyNames,
+    `Fetched from ${url}\nPage title: ${pageContent.title}`
+  );
+  return { results, fetchFailed: false };
+};
+
+export const extractPortfolioFromText = async (
+  text: string,
+  investorName: string | undefined,
+  existingCompanyNames: string[],
+  sourceLabel?: string
+): Promise<DiscoveredPortfolioCompany[]> => {
+  const truncated = text.length > 12000
+    ? text.substring(0, 12000) + '\n[truncated]'
+    : text;
+
+  const excludeList = existingCompanyNames.length > 0
+    ? `\n\nEXCLUDE these companies already in our directory: ${existingCompanyNames.join(', ')}`
+    : '';
+
+  const prompt = `You are analyzing content from a venture capital or investment firm${investorName ? ` ("${investorName}")` : ''} to extract their portfolio companies.
+
+${sourceLabel ? `Source: ${sourceLabel}\n` : ''}Content:
+---
+${truncated}
+---
+
+Extract ALL portfolio companies from this content that operate in or are relevant to the crypto, Web3, blockchain, digital assets, stablecoins, DeFi, or fintech space.
+
+For EACH company found, determine if it's relevant to our scope (crypto/Web3/digital assets/blockchain/fintech). Include companies even if their crypto relevance isn't obvious — we want to cast a wide net and let the user decide.${excludeList}
+
+Return a JSON array of objects with:
+- "name": string (company name exactly as shown in the content)
+- "description": string (1 sentence — what the company does, based on context or your knowledge)
+- "category": string (one of: "Issuer", "Infrastructure", "Wallet", "Payments", "DeFi", "Custody", "Banks", "Exchange", "Analytics", "Web3", "Fintech", "Other")
+- "fundingStage": string (e.g. "Seed", "Pre-Seed", "Series A", "Series B", "Growth", "Unknown")
+- "investmentDate": string (YYYY-MM-DD if known, otherwise omit)
+
+If the content lists companies but none are crypto/Web3 related, return an empty array [].
+RETURN ONLY RAW JSON ARRAY.`;
+
+  try {
+    return await executeWithRetry('extractPortfolioFromText', async () => {
+      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.3);
+      const json = parseJSON(text);
+      if (!Array.isArray(json)) {
+        console.warn('extractPortfolioFromText: non-array response');
+        return [];
+      }
+      return json.filter((c: any) =>
+        c && typeof c.name === 'string' && typeof c.description === 'string'
+      );
+    });
+  } catch (error) {
+    console.error('extractPortfolioFromText failed:', error);
+    return [];
+  }
+};
+
 export const analyzeNewsForCompanies = async (
   content: string,
   companyNames: string[]
@@ -596,8 +741,8 @@ export interface NewsRelationship {
   company1: string;
   company2: string;
   description: string;
-  company1PartnerType: 'Fortune500Global' | 'Fortune500Global' | 'CryptoNative';
-  company2PartnerType: 'Fortune500Global' | 'Fortune500Global' | 'CryptoNative';
+  company1PartnerType: 'Fortune500Global' | 'CryptoNative' | 'Investor';
+  company2PartnerType: 'Fortune500Global' | 'CryptoNative' | 'Investor';
   date?: string;
 }
 
@@ -621,8 +766,8 @@ Each object must have:
 - "company1": string (exact name from the list above)
 - "company2": string (exact name from the list above)
 - "description": string (1-2 sentence description of the relationship from this article)
-- "company1PartnerType": "Fortune500Global" | "Fortune500Global" | "CryptoNative" (classify company1: Fortune500Global if it's a major US public/Fortune 500 company, Fortune500Global if it's a major non-US global enterprise, CryptoNative if it's a crypto/blockchain-native company)
-- "company2PartnerType": "Fortune500Global" | "Fortune500Global" | "CryptoNative" (same classification for company2)
+- "company1PartnerType": "Fortune500Global" | "CryptoNative" | "Investor" (classify company1: Fortune500Global if it's a major global enterprise or Fortune 500 company, CryptoNative if it's a crypto/blockchain-native company, Investor if it's a VC firm, PE firm, or investment fund)
+- "company2PartnerType": "Fortune500Global" | "CryptoNative" | "Investor" (same classification for company2)
 - "date": string (YYYY-MM-DD of the announcement if mentioned, otherwise omit)
 
 If no formal relationships are clearly stated, return an empty array [].
@@ -638,8 +783,8 @@ RETURN ONLY RAW JSON ARRAY.`;
         typeof r.company1 === 'string' && mentionedCompanies.includes(r.company1) &&
         typeof r.company2 === 'string' && mentionedCompanies.includes(r.company2) &&
         typeof r.description === 'string' &&
-        ['Fortune500Global', 'Fortune500Global', 'CryptoNative'].includes(r.company1PartnerType) &&
-        ['Fortune500Global', 'Fortune500Global', 'CryptoNative'].includes(r.company2PartnerType)
+        ['Fortune500Global', 'CryptoNative', 'Investor'].includes(r.company1PartnerType) &&
+        ['Fortune500Global', 'CryptoNative', 'Investor'].includes(r.company2PartnerType)
       );
     });
   } catch (error) {

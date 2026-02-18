@@ -2,23 +2,22 @@ import { initializeApp, getApp, getApps, FirebaseApp } from 'firebase/app';
 import { getFirestore, Firestore } from 'firebase/firestore';
 
 // ------------------------------------------------------------------
-// FIREBASE PROJECT CONFIGURATION
+// FIREBASE PROJECT CONFIGURATION (loaded from environment variables)
 // ------------------------------------------------------------------
 const firebaseConfig = {
-  apiKey: "AIzaSyB30k09zzjlK6jyvpD3E7X3P8BdCOdlyT0",
-  authDomain: "stablemap-app.firebaseapp.com",
-  projectId: "stablemap-app",
-  storageBucket: "stablemap-app.firebasestorage.app",
-  messagingSenderId: "1062872314462",
-  appId: "1:1062872314462:web:cc56661049e1e08072bacf",
-  measurementId: "G-XB4SHV0DLK"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "",
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "",
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "",
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "",
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || "",
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || ""
 };
 
 const isValidConfig = !!(
-  firebaseConfig.projectId && 
-  firebaseConfig.projectId !== "your-project-id" && 
+  firebaseConfig.projectId &&
   firebaseConfig.apiKey &&
-  firebaseConfig.apiKey !== "AIzaSy_PLACEHOLDER"
+  firebaseConfig.apiKey.startsWith("AIzaSy")
 );
 
 let dbInstance: any = null;

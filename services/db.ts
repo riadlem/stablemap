@@ -318,15 +318,20 @@ export const db = {
   async saveNews(news: NewsItem[]): Promise<void> {
     const validNews = news.filter(n => isWithinLast12Months(n.date));
 
-    // --- FIREBASE MODE ---
+    // --- FIREBASE MODE (chunked to stay under Firestore's 500-op batch limit) ---
     if (!checkOffline()) {
       try {
-        const batch = writeBatch(dbInstance);
-        validNews.forEach(item => {
-          const docRef = doc(dbInstance, COLLECTIONS.NEWS, item.id);
-          batch.set(docRef, sanitizeForFirestore(item), { merge: true });
-        });
-        await withTimeout(batch.commit(), 5000);
+        const BATCH_SIZE = 450;
+        for (let i = 0; i < validNews.length; i += BATCH_SIZE) {
+          const chunk = validNews.slice(i, i + BATCH_SIZE);
+          const batch = writeBatch(dbInstance);
+          chunk.forEach(item => {
+            const docRef = doc(dbInstance, COLLECTIONS.NEWS, item.id);
+            batch.set(docRef, sanitizeForFirestore(item), { merge: true });
+          });
+          await withTimeout(batch.commit(), 8000);
+        }
+        console.log(`[DB] Saved ${validNews.length} news items in ${Math.ceil(validNews.length / BATCH_SIZE)} batch(es).`);
       } catch (error: any) {
         console.error("[DB] Error saving news:", error.message);
         goOffline();

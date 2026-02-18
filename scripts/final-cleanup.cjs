@@ -1,13 +1,15 @@
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '../.env.local') });
 const { initializeApp, getApps, getApp } = require('firebase/app');
 const { getFirestore, collection, getDocs, doc, setDoc, writeBatch } = require('firebase/firestore');
 
 const config = {
-  apiKey: 'AIzaSyB30k09zzjlK6jyvpD3E7X3P8BdCOdlyT0',
-  authDomain: 'stablemap-app.firebaseapp.com',
-  projectId: 'stablemap-app',
-  storageBucket: 'stablemap-app.firebasestorage.app',
-  messagingSenderId: '1062872314462',
-  appId: '1:1062872314462:web:cc56661049e1e08072bacf'
+  apiKey: process.env.VITE_FIREBASE_API_KEY,
+  authDomain: process.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.VITE_FIREBASE_APP_ID
 };
 
 function generateCompanyId(name) {
