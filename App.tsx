@@ -517,7 +517,7 @@ const App: React.FC = () => {
       case View.INTELLIGENCE: return <Intelligence directoryCompanies={companies.map(c => c.name)} />;
       case View.JOBS: return <JobBoard companies={companies} onUpdateCompanies={handleCompaniesUpdate} />;
       case View.LISTS: return <CompanyLists companies={companies} />;
-      case View.INVESTORS: return <Investors companies={companies} onSelectCompany={setSelectedCompany} />;
+      case View.INVESTORS: return <Investors companies={companies} onSelectCompany={setSelectedCompany} onAddCompany={handleAddCompany} />;
       case View.LOGS: return <Logs onBack={() => setCurrentView(View.DIRECTORY)} />;
       default: return <div>View not found</div>;
     }

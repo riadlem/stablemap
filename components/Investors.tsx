@@ -1,10 +1,12 @@
 import React, { useMemo, useState } from 'react';
-import { Search, TrendingUp, ChevronDown, ChevronUp, Building2, DollarSign, Users } from 'lucide-react';
+import { Search, TrendingUp, ChevronDown, ChevronUp, Building2, DollarSign, Users, Plus, Loader2, Telescope, Check, X, UserPlus } from 'lucide-react';
 import { Company } from '../types';
+import { lookupInvestorPortfolio, DiscoveredPortfolioCompany } from '../services/claudeService';
 
 interface InvestorsProps {
   companies: Company[];
   onSelectCompany: (company: Company) => void;
+  onAddCompany: (name: string) => Promise<void>;
 }
 
 interface InvestorEntry {
@@ -12,10 +14,26 @@ interface InvestorEntry {
   portfolio: Company[];
 }
 
-const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany }) => {
+const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAddCompany }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [expandedInvestor, setExpandedInvestor] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<'portfolio' | 'alpha'>('portfolio');
+
+  // Add investor lookup state
+  const [newInvestorName, setNewInvestorName] = useState('');
+  const [isLookingUp, setIsLookingUp] = useState(false);
+  const [lookupResults, setLookupResults] = useState<DiscoveredPortfolioCompany[] | null>(null);
+  const [lookupInvestorLabel, setLookupInvestorLabel] = useState('');
+
+  // Discover portfolio state (per existing investor)
+  const [discoveringFor, setDiscoveringFor] = useState<string | null>(null);
+  const [discoveredCompanies, setDiscoveredCompanies] = useState<Map<string, DiscoveredPortfolioCompany[]>>(new Map());
+
+  // Track which companies are being added
+  const [addingCompanies, setAddingCompanies] = useState<Set<string>>(new Set());
+  const [addedCompanies, setAddedCompanies] = useState<Set<string>>(new Set());
+
+  const existingCompanyNames = useMemo(() => companies.map(c => c.name), [companies]);
 
   const investors = useMemo<InvestorEntry[]>(() => {
     const map = new Map<string, Company[]>();
@@ -71,6 +89,106 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany }) => 
     setExpandedInvestor(prev => (prev === name ? null : name));
   };
 
+  // Discover other investments for an existing investor
+  const handleDiscoverPortfolio = async (investorName: string) => {
+    setDiscoveringFor(investorName);
+    try {
+      const results = await lookupInvestorPortfolio(investorName, existingCompanyNames);
+      setDiscoveredCompanies(prev => {
+        const next = new Map(prev);
+        next.set(investorName, results);
+        return next;
+      });
+    } catch (e) {
+      console.error('Discovery failed:', e);
+    } finally {
+      setDiscoveringFor(null);
+    }
+  };
+
+  // Lookup a new investor name
+  const handleNewInvestorLookup = async () => {
+    const name = newInvestorName.trim();
+    if (!name) return;
+    setIsLookingUp(true);
+    setLookupInvestorLabel(name);
+    setLookupResults(null);
+    try {
+      const results = await lookupInvestorPortfolio(name, existingCompanyNames);
+      setLookupResults(results);
+    } catch (e) {
+      console.error('Investor lookup failed:', e);
+      setLookupResults([]);
+    } finally {
+      setIsLookingUp(false);
+    }
+  };
+
+  const handleAddToDirectory = async (companyName: string) => {
+    setAddingCompanies(prev => new Set(prev).add(companyName));
+    try {
+      await onAddCompany(companyName);
+      setAddedCompanies(prev => new Set(prev).add(companyName));
+    } finally {
+      setAddingCompanies(prev => {
+        const next = new Set(prev);
+        next.delete(companyName);
+        return next;
+      });
+    }
+  };
+
+  const dismissLookupResults = () => {
+    setLookupResults(null);
+    setLookupInvestorLabel('');
+    setNewInvestorName('');
+  };
+
+  // Reusable discovered company card
+  const DiscoveredCompanyCard: React.FC<{ company: DiscoveredPortfolioCompany }> = ({ company }) => {
+    const isAdding = addingCompanies.has(company.name);
+    const isAdded = addedCompanies.has(company.name) || existingCompanyNames.some(n => n.toLowerCase() === company.name.toLowerCase());
+    return (
+      <div className="flex items-start justify-between gap-3 p-3 bg-white rounded-lg border border-amber-200">
+        <div className="min-w-0 flex-1">
+          <p className="font-semibold text-slate-900 text-sm">{company.name}</p>
+          <p className="text-xs text-slate-500 mt-0.5 leading-snug">{company.description}</p>
+          <div className="flex flex-wrap gap-1.5 mt-1.5">
+            <span className="text-[10px] font-medium bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded">
+              {company.category}
+            </span>
+            {company.fundingStage && (
+              <span className="text-[10px] font-medium bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded">
+                {company.fundingStage}
+              </span>
+            )}
+            {company.investmentDate && (
+              <span className="text-[10px] font-medium bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">
+                {company.investmentDate}
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="shrink-0">
+          {isAdded ? (
+            <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-1.5 rounded-lg">
+              <Check size={12} /> In Directory
+            </span>
+          ) : (
+            <button
+              onClick={() => handleAddToDirectory(company.name)}
+              disabled={isAdding}
+              className="flex items-center gap-1 text-[10px] font-bold text-indigo-600 hover:text-white hover:bg-indigo-600 bg-indigo-50 px-2 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+            >
+              {isAdding ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
+              {isAdding ? 'Adding...' : 'Add'}
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -84,6 +202,57 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany }) => 
             Investment firms and their portfolio companies in the crypto/digital asset ecosystem
           </p>
         </div>
+      </div>
+
+      {/* Add Investor Lookup */}
+      <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-xl p-5">
+        <h3 className="text-sm font-bold text-amber-900 mb-1 flex items-center gap-2">
+          <UserPlus size={16} className="text-amber-600" /> Look Up an Investor
+        </h3>
+        <p className="text-xs text-amber-700 mb-3">
+          Enter a VC or investment firm name to discover their stablecoin & digital asset portfolio companies
+        </p>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            placeholder="e.g. Andreessen Horowitz, Paradigm, Sequoia..."
+            value={newInvestorName}
+            onChange={e => setNewInvestorName(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleNewInvestorLookup()}
+            className="flex-1 px-3 py-2 text-sm border border-amber-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white placeholder-amber-400"
+          />
+          <button
+            onClick={handleNewInvestorLookup}
+            disabled={isLookingUp || !newInvestorName.trim()}
+            className="flex items-center gap-2 px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-bold hover:bg-amber-700 transition-colors disabled:opacity-50"
+          >
+            {isLookingUp ? <Loader2 size={14} className="animate-spin" /> : <Telescope size={14} />}
+            {isLookingUp ? 'Searching...' : 'Discover Portfolio'}
+          </button>
+        </div>
+
+        {/* Lookup results */}
+        {lookupResults !== null && (
+          <div className="mt-4 bg-white border border-amber-200 rounded-xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-sm font-bold text-slate-900">
+                {lookupResults.length > 0
+                  ? `Found ${lookupResults.length} portfolio ${lookupResults.length === 1 ? 'company' : 'companies'} for ${lookupInvestorLabel}`
+                  : `No stablecoin/digital-asset investments found for "${lookupInvestorLabel}"`}
+              </p>
+              <button onClick={dismissLookupResults} className="text-slate-400 hover:text-slate-600">
+                <X size={16} />
+              </button>
+            </div>
+            {lookupResults.length > 0 && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {lookupResults.map(company => (
+                  <DiscoveredCompanyCard key={company.name} company={company} />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Stats */}
@@ -166,6 +335,8 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany }) => 
         <div className="space-y-3">
           {filtered.map(inv => {
             const isExpanded = expandedInvestor === inv.name;
+            const isDiscovering = discoveringFor === inv.name;
+            const discovered = discoveredCompanies.get(inv.name);
             return (
               <div
                 key={inv.name}
@@ -270,6 +441,36 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany }) => 
                           </div>
                         </button>
                       ))}
+                    </div>
+
+                    {/* Discover Other Investments */}
+                    <div className="mt-4 pt-4 border-t border-slate-200">
+                      {!discovered ? (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleDiscoverPortfolio(inv.name); }}
+                          disabled={isDiscovering}
+                          className="flex items-center gap-2 px-3 py-2 text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors disabled:opacity-60"
+                        >
+                          {isDiscovering ? <Loader2 size={14} className="animate-spin" /> : <Telescope size={14} />}
+                          {isDiscovering ? 'Searching for other investments...' : 'Discover Other Investments in Digital Assets'}
+                        </button>
+                      ) : (
+                        <div>
+                          <p className="text-xs font-semibold text-amber-700 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                            <Telescope size={12} />
+                            {discovered.length > 0
+                              ? `${discovered.length} other ${discovered.length === 1 ? 'investment' : 'investments'} discovered`
+                              : 'No other digital-asset investments found'}
+                          </p>
+                          {discovered.length > 0 && (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              {discovered.map(company => (
+                                <DiscoveredCompanyCard key={company.name} company={company} />
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}

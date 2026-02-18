@@ -557,6 +557,54 @@ RETURN ONLY RAW JSON ARRAY.`;
   }
 };
 
+export interface DiscoveredPortfolioCompany {
+  name: string;
+  description: string;
+  category: string;
+  fundingStage?: string;
+  investmentDate?: string;
+}
+
+export const lookupInvestorPortfolio = async (
+  investorName: string,
+  existingCompanyNames: string[]
+): Promise<DiscoveredPortfolioCompany[]> => {
+  const excludeList = existingCompanyNames.length > 0
+    ? `\n\nEXCLUDE these companies already in our directory: ${existingCompanyNames.join(', ')}`
+    : '';
+
+  const prompt = `You are an expert on venture capital and investment in the digital asset ecosystem.
+
+List all known portfolio companies of "${investorName}" that operate in stablecoins, digital assets, blockchain infrastructure, crypto payments, DeFi, crypto custody, or tokenization.${excludeList}
+
+Return a JSON array of objects with:
+- "name": string (company name)
+- "description": string (1 sentence — what the company does)
+- "category": string (one of: "Issuer", "Infrastructure", "Wallet", "Payments", "DeFi", "Custody", "Banks", "Other")
+- "fundingStage": string (e.g. "Seed", "Series A", "Series B", "Growth", "Unknown")
+- "investmentDate": string (YYYY-MM-DD if known, otherwise omit)
+
+IMPORTANT: Only include companies you are confident "${investorName}" has actually invested in. Do NOT fabricate investments. If you don't know of any, return an empty array [].
+RETURN ONLY RAW JSON ARRAY.`;
+
+  try {
+    return await executeWithRetry('lookupInvestorPortfolio', async () => {
+      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.3);
+      const json = parseJSON(text);
+      if (!Array.isArray(json)) {
+        console.warn('lookupInvestorPortfolio: Claude returned non-array for', investorName);
+        return [];
+      }
+      return json.filter((c: any) =>
+        c && typeof c.name === 'string' && typeof c.description === 'string'
+      );
+    });
+  } catch (error) {
+    console.error('lookupInvestorPortfolio failed for', investorName, ':', error);
+    return [];
+  }
+};
+
 export const analyzeNewsForCompanies = async (
   content: string,
   companyNames: string[]
