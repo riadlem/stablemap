@@ -15,6 +15,116 @@ interface InvestorEntry {
   portfolio: Company[];
 }
 
+// Common VC/investor domain overrides for better logo resolution
+const INVESTOR_DOMAIN_OVERRIDES: Record<string, string> = {
+  'Andreessen Horowitz': 'a16z.com',
+  'a16z': 'a16z.com',
+  'a16z Crypto': 'a16z.com',
+  'Sequoia Capital': 'sequoiacap.com',
+  'Sequoia': 'sequoiacap.com',
+  'Lightspeed Venture Partners': 'lsvp.com',
+  'Lightspeed': 'lsvp.com',
+  'Accel': 'accel.com',
+  'Accel Partners': 'accel.com',
+  'Benchmark': 'benchmark.com',
+  'Benchmark Capital': 'benchmark.com',
+  'Greylock Partners': 'greylock.com',
+  'Greylock': 'greylock.com',
+  'Index Ventures': 'indexventures.com',
+  'Insight Partners': 'insightpartners.com',
+  'Tiger Global': 'tigerglobal.com',
+  'Tiger Global Management': 'tigerglobal.com',
+  'Coatue': 'coatue.com',
+  'Coatue Management': 'coatue.com',
+  'Ribbit Capital': 'ribbitcap.com',
+  'General Catalyst': 'generalcatalyst.com',
+  'Bessemer Venture Partners': 'bvp.com',
+  'Bessemer': 'bvp.com',
+  'Union Square Ventures': 'usv.com',
+  'Founders Fund': 'foundersfund.com',
+  'Khosla Ventures': 'khoslaventures.com',
+  'NEA': 'nea.com',
+  'New Enterprise Associates': 'nea.com',
+  'Paradigm': 'paradigm.xyz',
+  'Polychain Capital': 'polychain.capital',
+  'Polychain': 'polychain.capital',
+  'Pantera Capital': 'panteracapital.com',
+  'Pantera': 'panteracapital.com',
+  'Multicoin Capital': 'multicoin.capital',
+  'Multicoin': 'multicoin.capital',
+  'Coinbase Ventures': 'coinbase.com',
+  'Binance Labs': 'binance.com',
+  'Binance': 'binance.com',
+  'Digital Currency Group': 'dcg.co',
+  'DCG': 'dcg.co',
+  'Galaxy Digital': 'galaxy.com',
+  'Jump Crypto': 'jumpcrypto.com',
+  'Jump Trading': 'jumptrading.com',
+  'Dragonfly': 'dragonfly.xyz',
+  'Dragonfly Capital': 'dragonfly.xyz',
+  'Electric Capital': 'electriccapital.com',
+  'Framework Ventures': 'framework.ventures',
+  'Blockchain Capital': 'blockchaincapital.com',
+  'Animoca Brands': 'animocabrands.com',
+  'Circle': 'circle.com',
+  'Circle Ventures': 'circle.com',
+  'Variant': 'variant.fund',
+  'Variant Fund': 'variant.fund',
+  'Haun Ventures': 'haun.co',
+  'Placeholder VC': 'placeholder.vc',
+  'Castle Island Ventures': 'castleisland.vc',
+  'Brevan Howard': 'brevanhoward.com',
+  'Brevan Howard Digital': 'brevanhoward.com',
+  'SoftBank': 'softbank.com',
+  'SoftBank Vision Fund': 'softbank.com',
+  'Goldman Sachs': 'goldmansachs.com',
+  'JPMorgan': 'jpmorgan.com',
+  'Morgan Stanley': 'morganstanley.com',
+  'BlackRock': 'blackrock.com',
+  'Fidelity': 'fidelity.com',
+  'Fidelity Investments': 'fidelity.com',
+  'HSBC': 'hsbc.com',
+  'Standard Chartered': 'sc.com',
+  'Citigroup': 'citi.com',
+  'Citi': 'citi.com',
+  'Citi Ventures': 'citi.com',
+  'BNY Mellon': 'bnymellon.com',
+  'State Street': 'statestreet.com',
+  'PayPal Ventures': 'paypal.com',
+  'Visa': 'visa.com',
+  'Mastercard': 'mastercard.com',
+  'Samsung': 'samsung.com',
+  'Samsung Next': 'samsung.com',
+  'Google Ventures': 'gv.com',
+  'GV': 'gv.com',
+  'Temasek': 'temasek.com.sg',
+  'GIC': 'gic.com.sg',
+};
+
+// Derive a Clearbit-friendly domain from an investor name
+const getInvestorLogoDomain = (name: string): string => {
+  if (INVESTOR_DOMAIN_OVERRIDES[name]) return INVESTOR_DOMAIN_OVERRIDES[name];
+  // Try a slug-based guess: "Paradigm Capital" → "paradigmcapital.com"
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '');
+  return `${slug}.com`;
+};
+
+// 3-tier logo error handler matching Directory pattern
+const handleLogoError = (e: React.SyntheticEvent<HTMLImageElement>, name: string, website?: string) => {
+  const target = e.target as HTMLImageElement;
+  const domain = website?.replace(/^https?:\/\//, '').split('/')[0];
+  const avatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=f8fafc&color=64748b&size=128`;
+
+  if (target.src.includes('logo.clearbit.com')) {
+    // Clearbit failed → try Google Favicon
+    const favDomain = domain || getInvestorLogoDomain(name);
+    target.src = `https://www.google.com/s2/favicons?domain=${favDomain}&sz=128`;
+  } else if (!target.src.includes('ui-avatars.com')) {
+    // Google Favicon (or anything else) failed → fall back to UI Avatar
+    target.src = avatarUrl;
+  }
+};
+
 const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAddCompany, onAddCompanyWithInvestor }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [expandedInvestor, setExpandedInvestor] = useState<string | null>(null);
@@ -766,9 +876,12 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
                 >
                   <div className="flex items-center gap-4">
                     {/* Avatar */}
-                    <div className="w-10 h-10 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-700 font-bold text-sm shrink-0">
-                      {inv.name.slice(0, 2).toUpperCase()}
-                    </div>
+                    <img
+                      src={`https://logo.clearbit.com/${getInvestorLogoDomain(inv.name)}`}
+                      alt={inv.name}
+                      className="w-10 h-10 rounded-lg bg-white border border-slate-200 object-contain p-0.5 shrink-0"
+                      onError={(e) => handleLogoError(e, inv.name)}
+                    />
                     <div>
                       <p className="font-semibold text-slate-900">{inv.name}</p>
                       <p className="text-xs text-slate-500 mt-0.5">
@@ -787,9 +900,7 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
                           alt={c.name}
                           title={c.name}
                           className="w-7 h-7 rounded-full border-2 border-white object-contain bg-slate-100"
-                          onError={e => {
-                            (e.target as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${encodeURIComponent(c.name)}&background=f8fafc&color=64748b&size=64`;
-                          }}
+                          onError={(e) => handleLogoError(e, c.name, c.website)}
                         />
                       ))}
                       {inv.portfolio.length > 5 && (
@@ -822,10 +933,8 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
                           <img
                             src={company.logoPlaceholder}
                             alt={company.name}
-                            className="w-9 h-9 rounded-lg object-contain bg-slate-100 shrink-0 mt-0.5"
-                            onError={e => {
-                              (e.target as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${encodeURIComponent(company.name)}&background=f8fafc&color=64748b&size=64`;
-                            }}
+                            className="w-9 h-9 rounded-lg bg-white border border-slate-200 object-contain p-0.5 shrink-0 mt-0.5"
+                            onError={(e) => handleLogoError(e, company.name, company.website)}
                           />
                           <div className="min-w-0">
                             <p className="font-semibold text-slate-900 text-sm truncate group-hover:text-indigo-700 transition-colors">
