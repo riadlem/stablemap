@@ -130,16 +130,17 @@ export const db = {
    * Fetch companies from Firestore or LocalStorage
    */
   async getCompanies(): Promise<Company[]> {
-    let companies: Company[] = [];
+    let firestoreCompanies: Company[] = [];
+    let firestoreOk = false;
 
     // --- FIREBASE MODE ---
     if (!checkOffline()) {
       try {
         const companyCollection = collection(dbInstance, COLLECTIONS.COMPANIES);
-        const snapshot = await withTimeout<QuerySnapshot<DocumentData>>(getDocs(companyCollection), 5000);
+        const snapshot = await withTimeout<QuerySnapshot<DocumentData>>(getDocs(companyCollection), 15000);
 
         if (!snapshot.empty) {
-          companies = snapshot.docs.map(doc => {
+          firestoreCompanies = snapshot.docs.map(doc => {
             const raw = doc.data();
             const normalized = normalizeDates(raw);
             return {
@@ -150,7 +151,8 @@ export const db = {
               jobs: Array.isArray(normalized.jobs) ? normalized.jobs : []
             } as Company;
           });
-          console.log(`[DB] Loaded ${companies.length} companies from Firestore.`);
+          firestoreOk = true;
+          console.log(`[DB] Loaded ${firestoreCompanies.length} companies from Firestore.`);
         } else {
           console.log('[DB] Firestore empty. Seeding initial MOCK data...');
           await this.saveCompanies(MOCK_COMPANIES);
@@ -162,38 +164,44 @@ export const db = {
       }
     }
 
-    // --- LOCAL STORAGE MODE ---
-    if (companies.length === 0) {
-      try {
-        const stored = localStorage.getItem(LS_KEYS.COMPANIES);
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed)) {
-            // Apply same safety checks to LS data
-            companies = parsed.map(c => ({
-               ...c,
-               categories: Array.isArray(c.categories) ? c.categories : [],
-               partners: Array.isArray(c.partners) ? c.partners : [],
-               jobs: Array.isArray(c.jobs) ? c.jobs : []
-            }));
-          } else {
-            companies = MOCK_COMPANIES;
-          }
-        } else {
-          // Seed if empty
-          await this.saveCompanies(MOCK_COMPANIES);
-          companies = MOCK_COMPANIES;
+    // --- LOCAL STORAGE ---
+    let lsCompanies: Company[] = [];
+    try {
+      const stored = localStorage.getItem(LS_KEYS.COMPANIES);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          lsCompanies = parsed.map(c => ({
+            ...c,
+            categories: Array.isArray(c.categories) ? c.categories : [],
+            partners: Array.isArray(c.partners) ? c.partners : [],
+            jobs: Array.isArray(c.jobs) ? c.jobs : []
+          }));
         }
-      } catch (e) {
-        console.error("[DB] Local storage error:", e);
-        companies = MOCK_COMPANIES;
       }
+    } catch (e) {
+      console.error("[DB] Local storage read error:", e);
     }
 
-    // Defensive check
-    if (!Array.isArray(companies)) return MOCK_COMPANIES;
+    // --- MERGE: if Firestore succeeded, union with localStorage to recover any missing entries ---
+    if (firestoreOk) {
+      const fsIds = new Set(firestoreCompanies.map(c => c.id));
+      const lsOnly = lsCompanies.filter(c => !fsIds.has(c.id));
+      if (lsOnly.length > 0) {
+        const merged = [...firestoreCompanies, ...lsOnly];
+        console.log(`[DB] Merged ${lsOnly.length} localStorage-only companies into Firestore snapshot. Re-syncing...`);
+        this.saveCompanies(merged).catch(console.error);
+        return merged;
+      }
+      return firestoreCompanies;
+    }
 
-    return companies;
+    // --- OFFLINE FALLBACK ---
+    if (lsCompanies.length > 0) return lsCompanies;
+
+    // Seed if everything is empty
+    await this.saveCompanies(MOCK_COMPANIES);
+    return MOCK_COMPANIES;
   },
 
   /**
@@ -202,22 +210,25 @@ export const db = {
   async saveCompanies(companies: Company[]): Promise<void> {
     // --- FIREBASE MODE ---
     if (!checkOffline()) {
-      try {
-        const BATCH_SIZE = 400;
-        for (let i = 0; i < companies.length; i += BATCH_SIZE) {
-          const chunk = companies.slice(i, i + BATCH_SIZE);
-          const batch = writeBatch(dbInstance);
-          chunk.forEach(company => {
-            const docRef = doc(dbInstance, COLLECTIONS.COMPANIES, company.id);
-            batch.set(docRef, sanitizeForFirestore(company), { merge: true });
-          });
-          await withTimeout(batch.commit(), 8000);
+      const BATCH_SIZE = 400;
+      let savedCount = 0;
+      for (let i = 0; i < companies.length; i += BATCH_SIZE) {
+        const chunk = companies.slice(i, i + BATCH_SIZE);
+        const batch = writeBatch(dbInstance);
+        chunk.forEach(company => {
+          const docRef = doc(dbInstance, COLLECTIONS.COMPANIES, company.id);
+          batch.set(docRef, sanitizeForFirestore(company), { merge: true });
+        });
+        try {
+          await withTimeout(batch.commit(), 15000);
+          savedCount += chunk.length;
+        } catch (error: any) {
+          console.error(`[DB] Batch ${Math.floor(i / BATCH_SIZE) + 1} failed:`, error.message);
+          if (i === 0) goOffline(); // only go offline if the very first batch fails (auth/config issue)
+          break;
         }
-        console.log(`[DB] Saved ${companies.length} companies to Firestore.`);
-      } catch (error: any) {
-        console.error("[DB] Error saving companies to Firestore:", error.message);
-        goOffline();
       }
+      if (savedCount > 0) console.log(`[DB] Saved ${savedCount} companies to Firestore.`);
     }
 
     // --- LOCAL STORAGE MODE ---
@@ -271,7 +282,7 @@ export const db = {
     if (!checkOffline()) {
       try {
         const newsCollection = collection(dbInstance, COLLECTIONS.NEWS);
-        const snapshot = await withTimeout<QuerySnapshot<DocumentData>>(getDocs(newsCollection), 5000);
+        const snapshot = await withTimeout<QuerySnapshot<DocumentData>>(getDocs(newsCollection), 10000);
 
         if (snapshot.empty) {
           await this.saveNews(MOCK_NEWS);
@@ -329,7 +340,7 @@ export const db = {
             const docRef = doc(dbInstance, COLLECTIONS.NEWS, item.id);
             batch.set(docRef, sanitizeForFirestore(item), { merge: true });
           });
-          await withTimeout(batch.commit(), 8000);
+          await withTimeout(batch.commit(), 12000);
         }
         console.log(`[DB] Saved ${validNews.length} news items in ${Math.ceil(validNews.length / BATCH_SIZE)} batch(es).`);
       } catch (error: any) {
@@ -434,7 +445,7 @@ export const db = {
     if (!checkOffline()) {
       try {
         const gCollection = collection(dbInstance, COLLECTIONS.GLOBAL500);
-        const snapshot = await withTimeout<QuerySnapshot<DocumentData>>(getDocs(gCollection), 5000);
+        const snapshot = await withTimeout<QuerySnapshot<DocumentData>>(getDocs(gCollection), 10000);
         snapshot.forEach(doc => {
            dataMap[doc.id] = normalizeDates(doc.data()) as Global500ResearchData;
         });
@@ -467,7 +478,7 @@ export const db = {
     if (!checkOffline()) {
       try {
         const listsCollection = collection(dbInstance, COLLECTIONS.LISTS);
-        const snapshot = await withTimeout<QuerySnapshot<DocumentData>>(getDocs(listsCollection), 5000);
+        const snapshot = await withTimeout<QuerySnapshot<DocumentData>>(getDocs(listsCollection), 10000);
         if (!snapshot.empty) {
           lists = snapshot.docs.map(d => {
             const raw = d.data();
