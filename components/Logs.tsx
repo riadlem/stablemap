@@ -5,7 +5,7 @@ import { db } from '../services/db';
 import { Company } from '../types';
 import {
   ScrollText, Trash2, AlertTriangle, Info, AlertCircle, ArrowLeft, Clock, Filter,
-  Lock, CloudUpload, CheckCircle, Database
+  Lock, CloudUpload, CloudDownload, CheckCircle, Database, RefreshCw
 } from 'lucide-react';
 
 const STORAGE_KEY_PASSWORD = 'stablemap_logs_password';
@@ -14,6 +14,7 @@ const LS_COMPANIES_KEY = 'stablemap_companies';
 interface LogsProps {
   onBack: () => void;
   companies: Company[];
+  onRefreshFromFirestore: (companies: Company[]) => void;
 }
 
 const LEVEL_CONFIG = {
@@ -30,7 +31,7 @@ const CATEGORY_COLORS: Record<string, string> = {
   general: 'bg-slate-100 text-slate-600 border-slate-200',
 };
 
-const Logs: React.FC<LogsProps> = ({ onBack, companies }) => {
+const Logs: React.FC<LogsProps> = ({ onBack, companies, onRefreshFromFirestore }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
   const [passwordError, setPasswordError] = useState('');
@@ -46,6 +47,39 @@ const Logs: React.FC<LogsProps> = ({ onBack, companies }) => {
   // Data sync state
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'done' | 'error'>('idle');
   const [syncMessage, setSyncMessage] = useState('');
+  const [pullStatus, setPullStatus] = useState<'idle' | 'pulling' | 'done' | 'error'>('idle');
+  const [pullMessage, setPullMessage] = useState('');
+  const [firestoreCount, setFirestoreCount] = useState<number | null>(null);
+  const [firestoreLoading, setFirestoreLoading] = useState(false);
+
+  const fetchFirestoreCount = async () => {
+    setFirestoreLoading(true);
+    try {
+      const fsCompanies = await db.getCompanies();
+      setFirestoreCount(fsCompanies.length);
+    } catch {
+      setFirestoreCount(null);
+    } finally {
+      setFirestoreLoading(false);
+    }
+  };
+
+  const handlePullFromFirestore = async () => {
+    setPullStatus('pulling');
+    setPullMessage('');
+    try {
+      const fsCompanies = await db.getCompanies();
+      if (fsCompanies.length === 0) { setPullStatus('error'); setPullMessage('Firestore returned 0 companies.'); return; }
+      localStorage.setItem(LS_COMPANIES_KEY, JSON.stringify(fsCompanies));
+      onRefreshFromFirestore(fsCompanies);
+      setFirestoreCount(fsCompanies.length);
+      setPullStatus('done');
+      setPullMessage(`${fsCompanies.length} companies pulled from Firestore → localStorage & app.`);
+    } catch (e: any) {
+      setPullStatus('error');
+      setPullMessage(e?.message || 'Pull failed.');
+    }
+  };
 
   const lsCount = (() => {
     try {
@@ -86,6 +120,8 @@ const Logs: React.FC<LogsProps> = ({ onBack, companies }) => {
   useEffect(() => {
     if (autoScroll && listRef.current) listRef.current.scrollTop = 0;
   }, [entries.length, autoScroll]);
+
+  useEffect(() => { fetchFirestoreCount(); }, []);
 
   const handleSetPassword = () => {
     if (passwordInput.length < 4) { setPasswordError('Password must be at least 4 characters'); return; }
@@ -199,47 +235,89 @@ const Logs: React.FC<LogsProps> = ({ onBack, companies }) => {
         <h2 className="text-xs font-black text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2">
           <Database size={13} /> Firestore Data Sync
         </h2>
-        <div className="flex items-center gap-6 mb-3">
+
+        {/* Counts row */}
+        <div className="flex flex-wrap items-center gap-6 mb-4">
           <div>
             <p className="text-2xl font-black text-slate-900">{lsCount}</p>
-            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">In localStorage</p>
+            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">localStorage</p>
           </div>
-          <div className="text-slate-300 font-bold text-lg">→</div>
+          <div>
+            <p className="text-2xl font-black text-orange-600">
+              {firestoreLoading ? <span className="animate-pulse">...</span> : firestoreCount ?? '—'}
+            </p>
+            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-1">
+              Firestore
+              <button onClick={fetchFirestoreCount} disabled={firestoreLoading}
+                className="text-slate-400 hover:text-indigo-600 transition-colors" title="Refresh Firestore count">
+                <RefreshCw size={10} className={firestoreLoading ? 'animate-spin' : ''} />
+              </button>
+            </p>
+          </div>
           <div>
             <p className="text-2xl font-black text-indigo-600">{companies.length}</p>
-            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Currently loaded</p>
+            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Loaded in app</p>
           </div>
-          {lsCount > companies.length && (
-            <div className="ml-2 px-2 py-1 bg-amber-50 border border-amber-200 rounded-lg">
-              <p className="text-[10px] font-bold text-amber-700">{lsCount - companies.length} entries missing from Firestore</p>
+
+          {/* Status badges */}
+          {firestoreCount !== null && lsCount !== firestoreCount && (
+            <div className="px-2 py-1 bg-amber-50 border border-amber-200 rounded-lg">
+              <p className="text-[10px] font-bold text-amber-700">Out of sync ({Math.abs(lsCount - firestoreCount)} difference)</p>
             </div>
           )}
-          {lsCount === companies.length && companies.length > 0 && (
-            <div className="ml-2 px-2 py-1 bg-emerald-50 border border-emerald-200 rounded-lg">
+          {firestoreCount !== null && lsCount === firestoreCount && lsCount > 0 && (
+            <div className="px-2 py-1 bg-emerald-50 border border-emerald-200 rounded-lg">
               <p className="text-[10px] font-bold text-emerald-700">In sync</p>
             </div>
           )}
         </div>
-        <div className="flex items-center gap-3">
+
+        {/* Action buttons */}
+        <div className="flex flex-wrap items-center gap-3 mb-2">
+          {/* Push: localStorage → Firestore */}
           <button
             onClick={handleForceSync}
             disabled={syncStatus === 'syncing' || lsCount === 0}
             className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 transition-colors disabled:opacity-50"
           >
             {syncStatus === 'syncing'
-              ? <><span className="animate-spin inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full" /> Syncing...</>
+              ? <><span className="animate-spin inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full" /> Pushing...</>
               : syncStatus === 'done'
-              ? <><CheckCircle size={13} /> Synced</>
-              : <><CloudUpload size={13} /> Force Sync localStorage → Firestore</>}
+              ? <><CheckCircle size={13} /> Pushed</>
+              : <><CloudUpload size={13} /> Push localStorage → Firestore</>}
           </button>
+
+          {/* Pull: Firestore → localStorage */}
+          <button
+            onClick={handlePullFromFirestore}
+            disabled={pullStatus === 'pulling'}
+            className="flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded-lg text-xs font-bold hover:bg-orange-700 transition-colors disabled:opacity-50"
+          >
+            {pullStatus === 'pulling'
+              ? <><span className="animate-spin inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full" /> Pulling...</>
+              : pullStatus === 'done'
+              ? <><CheckCircle size={13} /> Pulled</>
+              : <><CloudDownload size={13} /> Pull Firestore → localStorage</>}
+          </button>
+        </div>
+
+        {/* Status messages */}
+        <div className="space-y-1">
           {syncMessage && (
             <p className={`text-xs font-medium ${syncStatus === 'error' ? 'text-red-600' : 'text-emerald-600'}`}>
               {syncMessage}
             </p>
           )}
+          {pullMessage && (
+            <p className={`text-xs font-medium ${pullStatus === 'error' ? 'text-red-600' : 'text-emerald-600'}`}>
+              {pullMessage}
+            </p>
+          )}
         </div>
+
         <p className="text-[10px] text-slate-400 mt-2">
-          Pushes all {lsCount} companies from this browser's localStorage to Firestore. Use this after an API key rotation or if Vercel shows fewer entries than expected.
+          <strong>Push</strong> sends localStorage data to Firestore.
+          <strong> Pull</strong> fetches Firestore data into localStorage & reloads the app.
         </p>
       </div>
 
