@@ -24,6 +24,7 @@ import JobBoard from './components/JobBoard';
 import Logs from './components/Logs';
 import CompanyLists from './components/CompanyLists';
 import Investors from './components/Investors';
+import VCPortfolioImport from './components/VCPortfolioImport';
 import ShareModal from './components/ShareModal';
 import { Company, Partner, NewsItem, Category } from './types';
 import { enrichCompanyData, scanForNewPartnerships, recommendMissingCompanies, getCurrentModelName, fetchUrlContent, analyzeNewsForCompanies, analyzeNewsRelationships } from "./services/claudeService";
@@ -36,6 +37,7 @@ enum View {
   JOBS = 'Jobs',
   LISTS = 'Lists',
   INVESTORS = 'Investors',
+  VC_IMPORT = 'VCImport',
   LOGS = 'Logs'
 }
 
@@ -607,7 +609,8 @@ const App: React.FC = () => {
       case View.INTELLIGENCE: return <Intelligence directoryCompanies={companies.map(c => c.name)} companies={companies} />;
       case View.JOBS: return <JobBoard companies={companies} onUpdateCompanies={handleCompaniesUpdate} />;
       case View.LISTS: return <CompanyLists companies={companies} />;
-      case View.INVESTORS: return <Investors companies={companies} onSelectCompany={setSelectedCompany} onAddCompany={handleAddCompany} onAddCompanyWithInvestor={handleAddCompanyWithInvestor} />;
+      case View.INVESTORS: return <Investors companies={companies} onSelectCompany={setSelectedCompany} onAddCompany={handleAddCompany} onAddCompanyWithInvestor={handleAddCompanyWithInvestor} onNavigateToVCImport={() => setCurrentView(View.VC_IMPORT)} />;
+      case View.VC_IMPORT: return <VCPortfolioImport companies={companies} onAddCompanyWithInvestor={handleAddCompanyWithInvestor} onBack={() => setCurrentView(View.INVESTORS)} />;
       case View.LOGS: return <Logs onBack={() => setCurrentView(View.DIRECTORY)} />;
       default: return <div>View not found</div>;
     }
