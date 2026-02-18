@@ -1,15 +1,19 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { logger, LogEntry } from '../services/logger';
+import { db } from '../services/db';
+import { Company } from '../types';
 import {
   ScrollText, Trash2, AlertTriangle, Info, AlertCircle, ArrowLeft, Clock, Filter,
-  Lock
+  Lock, CloudUpload, CheckCircle, Database
 } from 'lucide-react';
 
 const STORAGE_KEY_PASSWORD = 'stablemap_logs_password';
+const LS_COMPANIES_KEY = 'stablemap_companies';
 
 interface LogsProps {
   onBack: () => void;
+  companies: Company[];
 }
 
 const LEVEL_CONFIG = {
@@ -26,7 +30,7 @@ const CATEGORY_COLORS: Record<string, string> = {
   general: 'bg-slate-100 text-slate-600 border-slate-200',
 };
 
-const Logs: React.FC<LogsProps> = ({ onBack }) => {
+const Logs: React.FC<LogsProps> = ({ onBack, companies }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
   const [passwordError, setPasswordError] = useState('');
@@ -38,6 +42,36 @@ const Logs: React.FC<LogsProps> = ({ onBack }) => {
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [autoScroll, setAutoScroll] = useState(true);
   const listRef = useRef<HTMLDivElement>(null);
+
+  // Data sync state
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'done' | 'error'>('idle');
+  const [syncMessage, setSyncMessage] = useState('');
+
+  const lsCount = (() => {
+    try {
+      const raw = localStorage.getItem(LS_COMPANIES_KEY);
+      if (!raw) return 0;
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.length : 0;
+    } catch { return 0; }
+  })();
+
+  const handleForceSync = async () => {
+    setSyncStatus('syncing');
+    setSyncMessage('');
+    try {
+      const raw = localStorage.getItem(LS_COMPANIES_KEY);
+      if (!raw) { setSyncStatus('error'); setSyncMessage('No data found in localStorage.'); return; }
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed) || parsed.length === 0) { setSyncStatus('error'); setSyncMessage('localStorage is empty.'); return; }
+      await db.saveCompanies(parsed);
+      setSyncStatus('done');
+      setSyncMessage(`${parsed.length} companies pushed to Firestore.`);
+    } catch (e: any) {
+      setSyncStatus('error');
+      setSyncMessage(e?.message || 'Sync failed.');
+    }
+  };
 
   useEffect(() => {
     const storedPassword = localStorage.getItem(STORAGE_KEY_PASSWORD);
@@ -158,6 +192,55 @@ const Logs: React.FC<LogsProps> = ({ onBack }) => {
           <div className="text-2xl font-black text-red-600">{errorCount}</div>
           <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Errors</div>
         </div>
+      </div>
+
+      {/* Firestore Sync Panel */}
+      <div className="bg-white rounded-xl border border-slate-200 p-4 mb-6">
+        <h2 className="text-xs font-black text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2">
+          <Database size={13} /> Firestore Data Sync
+        </h2>
+        <div className="flex items-center gap-6 mb-3">
+          <div>
+            <p className="text-2xl font-black text-slate-900">{lsCount}</p>
+            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">In localStorage</p>
+          </div>
+          <div className="text-slate-300 font-bold text-lg">→</div>
+          <div>
+            <p className="text-2xl font-black text-indigo-600">{companies.length}</p>
+            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Currently loaded</p>
+          </div>
+          {lsCount > companies.length && (
+            <div className="ml-2 px-2 py-1 bg-amber-50 border border-amber-200 rounded-lg">
+              <p className="text-[10px] font-bold text-amber-700">{lsCount - companies.length} entries missing from Firestore</p>
+            </div>
+          )}
+          {lsCount === companies.length && companies.length > 0 && (
+            <div className="ml-2 px-2 py-1 bg-emerald-50 border border-emerald-200 rounded-lg">
+              <p className="text-[10px] font-bold text-emerald-700">In sync</p>
+            </div>
+          )}
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleForceSync}
+            disabled={syncStatus === 'syncing' || lsCount === 0}
+            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 transition-colors disabled:opacity-50"
+          >
+            {syncStatus === 'syncing'
+              ? <><span className="animate-spin inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full" /> Syncing...</>
+              : syncStatus === 'done'
+              ? <><CheckCircle size={13} /> Synced</>
+              : <><CloudUpload size={13} /> Force Sync localStorage → Firestore</>}
+          </button>
+          {syncMessage && (
+            <p className={`text-xs font-medium ${syncStatus === 'error' ? 'text-red-600' : 'text-emerald-600'}`}>
+              {syncMessage}
+            </p>
+          )}
+        </div>
+        <p className="text-[10px] text-slate-400 mt-2">
+          Pushes all {lsCount} companies from this browser's localStorage to Firestore. Use this after an API key rotation or if Vercel shows fewer entries than expected.
+        </p>
       </div>
 
       <div className="flex flex-wrap items-center gap-3 mb-4 bg-white rounded-xl border border-slate-200 p-3">
