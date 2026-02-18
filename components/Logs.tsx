@@ -55,8 +55,8 @@ const Logs: React.FC<LogsProps> = ({ onBack, companies, onRefreshFromFirestore }
   const fetchFirestoreCount = async () => {
     setFirestoreLoading(true);
     try {
-      const fsCompanies = await db.getCompanies();
-      setFirestoreCount(fsCompanies.length);
+      const result = await db.getFirestoreCompanyCount();
+      setFirestoreCount(result ? result.count : null);
     } catch {
       setFirestoreCount(null);
     } finally {
@@ -68,13 +68,13 @@ const Logs: React.FC<LogsProps> = ({ onBack, companies, onRefreshFromFirestore }
     setPullStatus('pulling');
     setPullMessage('');
     try {
-      const fsCompanies = await db.getCompanies();
-      if (fsCompanies.length === 0) { setPullStatus('error'); setPullMessage('Firestore returned 0 companies.'); return; }
-      localStorage.setItem(LS_COMPANIES_KEY, JSON.stringify(fsCompanies));
-      onRefreshFromFirestore(fsCompanies);
-      setFirestoreCount(fsCompanies.length);
+      const result = await db.getFirestoreCompanyCount();
+      if (!result || result.count === 0) { setPullStatus('error'); setPullMessage('Firestore returned 0 companies.'); return; }
+      localStorage.setItem(LS_COMPANIES_KEY, JSON.stringify(result.companies));
+      onRefreshFromFirestore(result.companies);
+      setFirestoreCount(result.count);
       setPullStatus('done');
-      setPullMessage(`${fsCompanies.length} companies pulled from Firestore → localStorage & app.`);
+      setPullMessage(`${result.count} companies pulled from Firestore → localStorage & app.`);
     } catch (e: any) {
       setPullStatus('error');
       setPullMessage(e?.message || 'Pull failed.');
@@ -98,12 +98,18 @@ const Logs: React.FC<LogsProps> = ({ onBack, companies, onRefreshFromFirestore }
       if (!raw) { setSyncStatus('error'); setSyncMessage('No data found in localStorage.'); return; }
       const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed) || parsed.length === 0) { setSyncStatus('error'); setSyncMessage('localStorage is empty.'); return; }
-      await db.saveCompanies(parsed);
-      setSyncStatus('done');
-      setSyncMessage(`${parsed.length} companies pushed to Firestore.`);
+      const savedCount = await db.forceWriteToFirestore(parsed);
+      if (savedCount < parsed.length) {
+        setSyncStatus('done');
+        setSyncMessage(`Partial: ${savedCount}/${parsed.length} companies written to Firestore.`);
+      } else {
+        setSyncStatus('done');
+        setSyncMessage(`${savedCount} companies written to Firestore.`);
+      }
+      fetchFirestoreCount();
     } catch (e: any) {
       setSyncStatus('error');
-      setSyncMessage(e?.message || 'Sync failed.');
+      setSyncMessage(e?.message || 'Push failed — check Firebase config.');
     }
   };
 

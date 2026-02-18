@@ -127,6 +127,28 @@ const goOffline = () => {
 
 export const db = {
   /**
+   * Get the raw Firestore document count for companies (no merge, no localStorage).
+   * Returns null if offline or Firestore unavailable.
+   */
+  async getFirestoreCompanyCount(): Promise<{ count: number; companies: Company[] } | null> {
+    if (!isConfigured || !dbInstance) return null;
+    // Bypass offline cooldown — this is an explicit user action
+    try {
+      const companyCollection = collection(dbInstance, COLLECTIONS.COMPANIES);
+      const snapshot = await withTimeout<QuerySnapshot<DocumentData>>(getDocs(companyCollection), 15000);
+      const companies = snapshot.docs.map(d => {
+        const raw = d.data();
+        const normalized = normalizeDates(raw);
+        return { ...normalized, id: d.id } as Company;
+      });
+      return { count: companies.length, companies };
+    } catch (e: any) {
+      console.warn("[DB] Error fetching Firestore company count:", e.message);
+      return null;
+    }
+  },
+
+  /**
    * Fetch companies from Firestore or LocalStorage
    */
   async getCompanies(): Promise<Company[]> {
@@ -202,6 +224,41 @@ export const db = {
     // Seed if everything is empty
     await this.saveCompanies(MOCK_COMPANIES);
     return MOCK_COMPANIES;
+  },
+
+  /**
+   * Force-write companies directly to Firestore, bypassing offline mode.
+   * Returns the number actually saved. Throws on total failure.
+   * Used by the sync panel for explicit user-triggered pushes.
+   */
+  async forceWriteToFirestore(companies: Company[]): Promise<number> {
+    if (!isConfigured || !dbInstance) {
+      throw new Error('Firebase is not configured. Check environment variables (VITE_FIREBASE_*).');
+    }
+    const BATCH_SIZE = 400;
+    let savedCount = 0;
+    const errors: string[] = [];
+    for (let i = 0; i < companies.length; i += BATCH_SIZE) {
+      const chunk = companies.slice(i, i + BATCH_SIZE);
+      const batch = writeBatch(dbInstance);
+      chunk.forEach(company => {
+        const docRef = doc(dbInstance, COLLECTIONS.COMPANIES, company.id);
+        batch.set(docRef, sanitizeForFirestore(company), { merge: true });
+      });
+      try {
+        await withTimeout(batch.commit(), 30000);
+        savedCount += chunk.length;
+      } catch (error: any) {
+        errors.push(`Batch ${Math.floor(i / BATCH_SIZE) + 1}: ${error.message}`);
+      }
+    }
+    if (savedCount === 0) {
+      throw new Error(`All batches failed: ${errors.join('; ')}`);
+    }
+    if (errors.length > 0) {
+      console.warn(`[DB] Partial push: ${savedCount}/${companies.length} saved. Errors: ${errors.join('; ')}`);
+    }
+    return savedCount;
   },
 
   /**
