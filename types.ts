@@ -47,6 +47,8 @@ export interface Job {
   type?: 'Full-time' | 'Contract' | 'Remote';
 }
 
+export type NewsSourceType = 'press' | 'press_release' | 'partnership';
+
 export interface NewsItem {
   id: string;
   title: string;
@@ -55,6 +57,17 @@ export interface NewsItem {
   summary: string;
   url: string;
   relatedCompanies: string[];
+  sourceType?: NewsSourceType;
+}
+
+export function classifyNewsSourceType(item: NewsItem): NewsSourceType {
+  if (item.sourceType) return item.sourceType;
+  if (item.id.startsWith('ptnr-') || item.source === 'Directory Intelligence') return 'partnership';
+  if (item.id.startsWith('news-api-')) return 'press';
+  if (item.id.startsWith('manual-news-') && item.url && item.url !== '#') return 'press';
+  if (item.id.startsWith('gen-news-')) return 'press_release';
+  if (item.source && !['Intelligence', 'Directory Intelligence', 'Manual Entry'].includes(item.source)) return 'press';
+  return 'press_release';
 }
 
 export interface Company {

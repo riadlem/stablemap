@@ -400,6 +400,7 @@ export const fetchIndustryNews = async (
           summary: article.summary,
           url: article.url || '#',
           relatedCompanies,
+          sourceType: 'press' as const,
         };
       });
   }
@@ -439,6 +440,7 @@ RETURN ONLY RAW JSON ARRAY.`;
           summary: item.summary,
           url: typeof item.url === 'string' ? item.url : '#',
           relatedCompanies: Array.isArray(item.relatedCompanies) ? item.relatedCompanies : [],
+          sourceType: 'press_release' as const,
         }));
     });
   } catch (error: any) {

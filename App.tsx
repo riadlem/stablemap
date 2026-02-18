@@ -80,7 +80,8 @@ const App: React.FC = () => {
             date: p.date || new Date().toISOString().split('T')[0],
             summary: p.description,
             url: p.sourceUrl || '#',
-            relatedCompanies: [companyName, p.name]
+            relatedCompanies: [companyName, p.name],
+            sourceType: 'partnership' as const
         };
     });
     if (newsItems.length > 0) await db.saveNews(newsItems);
@@ -191,7 +192,8 @@ const App: React.FC = () => {
               date: news.date,
               summary: autoSummary,
               source: 'Manual Entry',
-              relatedCompanies: mentionedNames
+              relatedCompanies: mentionedNames,
+              sourceType: (news.url && news.url !== '#') ? 'press' as const : 'press_release' as const
           };
 
           await db.saveNews([newItem]);
@@ -602,7 +604,7 @@ const App: React.FC = () => {
     switch (currentView) {
       case View.DIRECTORY: return <CompanyList companies={companies} onSelectCompany={setSelectedCompany} onAddCompany={handleAddCompany} onImportCompanies={handleImportCompanies} isAdding={addingCompany} onRefreshPending={handleRefreshPending} isRefreshingPending={isRefreshingPending} onScanRecommendations={handleScanRecommendations} onMergeDuplicates={handleMergeDuplicates} />;
       case View.PARTNERSHIPS_GLOBAL: return <GlobalPartnershipMatrix companies={companies} />;
-      case View.INTELLIGENCE: return <Intelligence directoryCompanies={companies.map(c => c.name)} />;
+      case View.INTELLIGENCE: return <Intelligence directoryCompanies={companies.map(c => c.name)} companies={companies} />;
       case View.JOBS: return <JobBoard companies={companies} onUpdateCompanies={handleCompaniesUpdate} />;
       case View.LISTS: return <CompanyLists companies={companies} />;
       case View.INVESTORS: return <Investors companies={companies} onSelectCompany={setSelectedCompany} onAddCompany={handleAddCompany} onAddCompanyWithInvestor={handleAddCompanyWithInvestor} />;

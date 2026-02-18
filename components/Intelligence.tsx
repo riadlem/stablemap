@@ -1,23 +1,33 @@
 
-import React, { useEffect, useState } from 'react';
-import { NewsItem } from '../types';
+import React, { useEffect, useState, useMemo } from 'react';
+import { NewsItem, Company, classifyNewsSourceType, NewsSourceType } from '../types';
 import { fetchIndustryNews } from "../services/claudeService";
 import { db } from '../services/db';
 import { MOCK_NEWS } from '../constants';
-import { Newspaper, RefreshCw, ExternalLink, Database, Filter, ChevronLeft, ChevronRight, Globe, TrendingUp, UserCheck } from 'lucide-react';
+import { Newspaper, RefreshCw, ExternalLink, Database, Filter, ChevronLeft, ChevronRight, Globe, TrendingUp, UserCheck, FileText, Handshake } from 'lucide-react';
 
 const ITEMS_PER_PAGE = 50;
 
+const SOURCE_TYPE_BADGE: Record<NewsSourceType, { bg: string; text: string; border: string; label: string }> = {
+  press:         { bg: 'bg-blue-50',    text: 'text-blue-700',    border: 'border-blue-100',    label: 'Press' },
+  press_release: { bg: 'bg-amber-50',   text: 'text-amber-700',   border: 'border-amber-100',   label: 'Press Release' },
+  partnership:   { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-100', label: 'Partnership' },
+};
+
+const HIDDEN_SOURCES = ['Directory Intelligence', 'Intelligence', 'Manual Entry'];
+
 interface IntelligenceProps {
     directoryCompanies?: string[];
+    companies?: Company[];
 }
 
-const Intelligence: React.FC<IntelligenceProps> = ({ directoryCompanies = [] }) => {
+const Intelligence: React.FC<IntelligenceProps> = ({ directoryCompanies = [], companies = [] }) => {
   const [news, setNews] = useState<NewsItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [initializing, setInitializing] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
   const [filterType, setFilterType] = useState<'All' | 'Global' | 'Directory'>('All');
+  const [sourceFilter, setSourceFilter] = useState<'all' | NewsSourceType>('all');
 
   // Helper to check for old news
   const isWithinLast12Months = (dateStr: string) => {
@@ -28,13 +38,31 @@ const Intelligence: React.FC<IntelligenceProps> = ({ directoryCompanies = [] }) 
     return date > oneYearAgo;
   };
 
-  // Load from DB on mount
+  // Load from DB on mount + merge company.recentNews
   useEffect(() => {
     const loadNews = async () => {
       let storedNews = await db.getNews();
-      
+
       // Filter out outdated news from storage
       storedNews = storedNews.filter(n => isWithinLast12Months(n.date));
+
+      // Merge recentNews from all tracked companies into global store
+      if (companies.length > 0) {
+        const existingIds = new Set(storedNews.map(n => n.id));
+        const companyNews: NewsItem[] = [];
+        companies.forEach(c => {
+          (c.recentNews || []).forEach(n => {
+            if (!existingIds.has(n.id) && isWithinLast12Months(n.date)) {
+              existingIds.add(n.id);
+              companyNews.push(n);
+            }
+          });
+        });
+        if (companyNews.length > 0) {
+          storedNews = [...storedNews, ...companyNews];
+          db.saveNews(companyNews).catch(console.error);
+        }
+      }
 
       // Detect if we are using mock data
       const isMock = JSON.stringify(storedNews) === JSON.stringify(MOCK_NEWS);
@@ -53,12 +81,14 @@ const Intelligence: React.FC<IntelligenceProps> = ({ directoryCompanies = [] }) 
            if (isEmpty) storedNews = MOCK_NEWS;
          }
       }
-      
+
+      // Sort by date descending
+      storedNews.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
       setNews(storedNews);
       setInitializing(false);
     };
     loadNews();
-  }, [directoryCompanies]);
+  }, [directoryCompanies, companies]);
 
   const handleRefresh = async () => {
     setLoading(true);
@@ -72,7 +102,7 @@ const Intelligence: React.FC<IntelligenceProps> = ({ directoryCompanies = [] }) 
            const updatedNews = [...uniqueFreshNews, ...news]
               .filter(n => isWithinLast12Months(n.date))
               .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-           
+
            setNews(updatedNews);
            await db.saveNews(updatedNews);
         }
@@ -83,24 +113,41 @@ const Intelligence: React.FC<IntelligenceProps> = ({ directoryCompanies = [] }) 
     setLoading(false);
   };
 
-  // Filter Logic
-  const filteredNews = news.filter(item => {
+  // Source type counts (computed over full unfiltered news)
+  const sourceCounts = useMemo(() => {
+    const counts = { all: news.length, press: 0, press_release: 0, partnership: 0 };
+    news.forEach(item => {
+      const st = classifyNewsSourceType(item);
+      counts[st]++;
+    });
+    return counts;
+  }, [news]);
+
+  // Two-dimension filter: source type + scope
+  const filteredNews = useMemo(() => news.filter(item => {
+      // Dimension 1: Source type
+      if (sourceFilter !== 'all') {
+        const st = classifyNewsSourceType(item);
+        if (st !== sourceFilter) return false;
+      }
+
+      // Dimension 2: Scope
       if (filterType === 'Global') {
-          return item.summary.toLowerCase().includes('global') || 
-                 item.summary.toLowerCase().includes('international') || 
+          return item.summary.toLowerCase().includes('global') ||
+                 item.summary.toLowerCase().includes('international') ||
                  item.relatedCompanies.some(c => ['Samsung', 'Sony', 'Siemens', 'HSBC', 'Standard Chartered', 'Societe Generale'].includes(c));
       }
       if (filterType === 'Directory') {
-          return item.relatedCompanies.some(c => 
+          return item.relatedCompanies.some(c =>
             directoryCompanies.some(dc => dc.toLowerCase().includes(c.toLowerCase()) || c.toLowerCase().includes(dc.toLowerCase()))
           );
       }
       return true;
-  });
+  }), [news, sourceFilter, filterType, directoryCompanies]);
 
   // Pagination Logic
   const totalPages = Math.ceil(filteredNews.length / ITEMS_PER_PAGE);
-  
+
   useEffect(() => {
     if (currentPage > totalPages && totalPages > 0) {
       setCurrentPage(totalPages);
@@ -108,7 +155,7 @@ const Intelligence: React.FC<IntelligenceProps> = ({ directoryCompanies = [] }) 
   }, [filteredNews.length, totalPages]);
 
   const paginatedNews = filteredNews.slice(
-    (currentPage - 1) * ITEMS_PER_PAGE, 
+    (currentPage - 1) * ITEMS_PER_PAGE,
     currentPage * ITEMS_PER_PAGE
   );
 
@@ -149,21 +196,46 @@ const Intelligence: React.FC<IntelligenceProps> = ({ directoryCompanies = [] }) 
                 <h3 className="font-bold text-slate-900 text-lg mb-2">Enterprise Intelligence</h3>
                 <p className="text-slate-500 text-sm">Automated tracking for Global 500 and your tracked directory companies.</p>
               </div>
+              {/* Row 1: Source Type Filters */}
               <div className="flex flex-wrap gap-2 mt-4">
-                  <button 
-                    onClick={() => setFilterType('All')}
+                  {([
+                    { key: 'all', label: 'All Types', count: sourceCounts.all },
+                    { key: 'press', label: 'Press', count: sourceCounts.press },
+                    { key: 'press_release', label: 'Press Releases', count: sourceCounts.press_release },
+                    { key: 'partnership', label: 'Partnership Intel', count: sourceCounts.partnership },
+                  ] as const).map(({ key, label, count }) => (
+                    <button
+                      key={key}
+                      onClick={() => { setSourceFilter(key); setCurrentPage(1); }}
+                      className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${
+                        sourceFilter === key
+                          ? key === 'press' ? 'bg-blue-600 text-white shadow-md'
+                            : key === 'press_release' ? 'bg-amber-600 text-white shadow-md'
+                            : key === 'partnership' ? 'bg-emerald-600 text-white shadow-md'
+                            : 'bg-slate-900 text-white shadow-md'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      {label} <span className="opacity-70 ml-1">{count}</span>
+                    </button>
+                  ))}
+              </div>
+              {/* Row 2: Scope Filters */}
+              <div className="flex flex-wrap gap-2 mt-2">
+                  <button
+                    onClick={() => { setFilterType('All'); setCurrentPage(1); }}
                     className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${filterType === 'All' ? 'bg-slate-900 text-white shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
                   >
                     All News
                   </button>
-                  <button 
-                    onClick={() => setFilterType('Directory')}
+                  <button
+                    onClick={() => { setFilterType('Directory'); setCurrentPage(1); }}
                     className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${filterType === 'Directory' ? 'bg-emerald-600 text-white shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
                   >
                     <UserCheck size={12} /> My Directory
                   </button>
-                  <button 
-                    onClick={() => setFilterType('Global')}
+                  <button
+                    onClick={() => { setFilterType('Global'); setCurrentPage(1); }}
                     className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${filterType === 'Global' ? 'bg-indigo-600 text-white shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
                   >
                     <Globe size={12} /> Global 500
@@ -176,10 +248,10 @@ const Intelligence: React.FC<IntelligenceProps> = ({ directoryCompanies = [] }) 
         <div>
            <h2 className="text-2xl font-bold text-slate-900">Intelligence Feed</h2>
            <p className="text-slate-500 text-sm mt-1">
-             Tracking the latest blockchain initiatives across the world's largest enterprises.
+             {filteredNews.length.toLocaleString()} items{sourceFilter !== 'all' || filterType !== 'All' ? ' (filtered)' : ''} across {news.length.toLocaleString()} total
            </p>
         </div>
-        <button 
+        <button
           onClick={handleRefresh}
           disabled={loading}
           className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 shadow-md transition-all text-sm font-bold disabled:opacity-50 active:scale-95"
@@ -194,17 +266,25 @@ const Intelligence: React.FC<IntelligenceProps> = ({ directoryCompanies = [] }) 
           <div className="text-center py-20 bg-white rounded-2xl border-2 border-dashed border-slate-200">
              <Filter className="mx-auto text-slate-300 mb-3" size={48} />
              <h3 className="text-slate-900 font-bold">No matching activity found</h3>
-             <p className="text-slate-500 text-sm mt-1 max-w-xs mx-auto">Try refreshing the feed or switching back to "All Regions".</p>
+             <p className="text-slate-500 text-sm mt-1 max-w-xs mx-auto">Try refreshing the feed or adjusting your filters.</p>
           </div>
         ) : (
           <>
-            {paginatedNews.map(item => (
+            {paginatedNews.map(item => {
+              const st = classifyNewsSourceType(item);
+              const badge = SOURCE_TYPE_BADGE[st];
+              return (
               <div key={item.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-200 transition-all group">
                 <div className="flex justify-between items-start mb-3">
-                  <div className="flex items-center gap-2">
-                    <span className="bg-indigo-50 text-indigo-700 text-[10px] font-black px-2.5 py-1 rounded-full uppercase tracking-widest border border-indigo-100">
-                        {item.source || 'Intelligence'}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`${badge.bg} ${badge.text} text-[10px] font-black px-2.5 py-1 rounded-full uppercase tracking-widest border ${badge.border}`}>
+                        {badge.label}
                     </span>
+                    {item.source && !HIDDEN_SOURCES.includes(item.source) && (
+                        <span className="bg-slate-50 text-slate-500 text-[10px] font-black px-2.5 py-1 rounded-full uppercase tracking-widest border border-slate-200">
+                            {item.source}
+                        </span>
+                    )}
                     {item.summary.toLowerCase().includes('global') && (
                         <span className="bg-blue-50 text-blue-700 text-[10px] font-black px-2.5 py-1 rounded-full uppercase tracking-widest border border-blue-100 flex items-center gap-1">
                             <Globe size={10} /> Global 500
@@ -216,11 +296,11 @@ const Intelligence: React.FC<IntelligenceProps> = ({ directoryCompanies = [] }) 
                         </span>
                     )}
                   </div>
-                  <span className="text-slate-400 text-[10px] font-black tracking-widest uppercase">{item.date}</span>
+                  <span className="text-slate-400 text-[10px] font-black tracking-widest uppercase shrink-0 ml-2">{item.date}</span>
                 </div>
                 <h3 className="text-lg font-bold text-slate-900 mb-3 group-hover:text-indigo-600 transition-colors leading-tight">{item.title}</h3>
                 <p className="text-slate-600 text-sm leading-relaxed mb-5">{item.summary}</p>
-                
+
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center pt-4 border-t border-slate-50 gap-4">
                   <div className="flex flex-wrap gap-2">
                     {item.relatedCompanies.slice(0, 4).map(c => (
@@ -234,25 +314,26 @@ const Intelligence: React.FC<IntelligenceProps> = ({ directoryCompanies = [] }) 
                   </a>
                 </div>
               </div>
-            ))}
+              );
+            })}
 
             {/* Pagination Controls */}
             {totalPages > 1 && (
               <div className="flex justify-center items-center gap-6 pt-10">
-                <button 
-                  onClick={() => handlePageChange(currentPage - 1)} 
+                <button
+                  onClick={() => handlePageChange(currentPage - 1)}
                   disabled={currentPage === 1}
                   className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-xs font-bold hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   <ChevronLeft size={16} /> Previous
                 </button>
-                
+
                 <div className="text-xs font-bold text-slate-400 uppercase tracking-widest">
                    <span className="text-slate-900">{currentPage}</span> / {totalPages}
                 </div>
 
-                <button 
-                  onClick={() => handlePageChange(currentPage + 1)} 
+                <button
+                  onClick={() => handlePageChange(currentPage + 1)}
                   disabled={currentPage === totalPages}
                   className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-xs font-bold hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
@@ -263,7 +344,7 @@ const Intelligence: React.FC<IntelligenceProps> = ({ directoryCompanies = [] }) 
           </>
         )}
       </div>
-      
+
       <div className="mt-12 text-center text-[10px] text-slate-400 font-bold uppercase tracking-widest pb-8">
         Enterprise monitoring covering {directoryCompanies.length} directory companies and top 500 global entities
       </div>
