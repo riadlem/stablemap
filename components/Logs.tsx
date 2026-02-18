@@ -101,6 +101,8 @@ const Logs: React.FC<LogsProps> = ({ onBack, companies, onRefreshFromFirestore }
       await db.saveCompanies(parsed);
       setSyncStatus('done');
       setSyncMessage(`${parsed.length} companies pushed to Firestore.`);
+      // Refresh the Firestore count after a successful push
+      fetchFirestoreCount();
     } catch (e: any) {
       setSyncStatus('error');
       setSyncMessage(e?.message || 'Sync failed.');

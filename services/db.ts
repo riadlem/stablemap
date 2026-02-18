@@ -131,7 +131,8 @@ export const db = {
    * Returns null if offline or Firestore unavailable.
    */
   async getFirestoreCompanyCount(): Promise<{ count: number; companies: Company[] } | null> {
-    if (checkOffline()) return null;
+    if (!isConfigured || !dbInstance) return null;
+    // Bypass offline cooldown — this is an explicit user action
     try {
       const companyCollection = collection(dbInstance, COLLECTIONS.COMPANIES);
       const snapshot = await withTimeout<QuerySnapshot<DocumentData>>(getDocs(companyCollection), 15000);
