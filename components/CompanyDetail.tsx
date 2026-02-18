@@ -158,6 +158,7 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
     p.type === 'Fortune500' as any
   );
   const cryptoPartners = company.partners.filter(p => p.type === 'CryptoNative');
+  const investorPartners = company.partners.filter(p => p.type === 'Investor');
 
   // Domain extraction for fallback
   const getDomain = () => {
@@ -362,6 +363,30 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
                         )}
                     </div>
                 </div>
+            )}
+
+            {/* Investor Partners */}
+            {investorPartners.length > 0 && (
+              <div className="col-span-full">
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-5">
+                  <h3 className="text-sm font-bold text-amber-900 mb-4 flex items-center gap-2 uppercase tracking-wide">
+                    <TrendingUp size={16} className="text-amber-600" /> Investors & Backers
+                  </h3>
+                  <div className="flex flex-wrap gap-3">
+                    {investorPartners.map((p, idx) => (
+                      <div key={idx} className="bg-white border border-amber-200 rounded-lg px-3 py-2 shadow-sm min-w-[160px]">
+                        <div className="font-semibold text-slate-900 text-sm">{p.name}</div>
+                        {p.description && (
+                          <div className="text-xs text-slate-500 mt-0.5">{p.description}</div>
+                        )}
+                        {p.date && (
+                          <div className="text-[10px] text-amber-600 font-medium mt-1">{p.date}</div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
             )}
 
             {/* Fortune 500 & Enterprise Column (Merged) */}

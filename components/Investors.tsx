@@ -20,10 +20,21 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany }) => 
   const investors = useMemo<InvestorEntry[]>(() => {
     const map = new Map<string, Company[]>();
     for (const company of companies) {
-      if (!company.funding?.investors?.length) continue;
-      for (const investor of company.funding.investors) {
+      const seen = new Set<string>();
+      // Source 1: funding.investors string array
+      for (const investor of company.funding?.investors ?? []) {
         const key = investor.trim();
-        if (!key) continue;
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        if (!map.has(key)) map.set(key, []);
+        map.get(key)!.push(company);
+      }
+      // Source 2: partners with type 'Investor'
+      for (const partner of company.partners ?? []) {
+        if (partner.type !== 'Investor') continue;
+        const key = partner.name.trim();
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
         if (!map.has(key)) map.set(key, []);
         map.get(key)!.push(company);
       }
