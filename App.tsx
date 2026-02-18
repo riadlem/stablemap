@@ -13,7 +13,8 @@ import {
   Zap,
   ScrollText,
   ListChecks,
-  GitMerge
+  GitMerge,
+  TrendingUp
 } from 'lucide-react';
 import CompanyList from './components/CompanyList';
 import CompanyDetail from './components/CompanyDetail';
@@ -22,6 +23,7 @@ import Intelligence from './components/Intelligence';
 import JobBoard from './components/JobBoard';
 import Logs from './components/Logs';
 import CompanyLists from './components/CompanyLists';
+import Investors from './components/Investors';
 import ShareModal from './components/ShareModal';
 import { Company, Partner, NewsItem, Category } from './types';
 import { enrichCompanyData, scanForNewPartnerships, recommendMissingCompanies, getCurrentModelName, fetchUrlContent, analyzeNewsForCompanies, analyzeNewsRelationships } from "./services/claudeService";
@@ -33,6 +35,7 @@ enum View {
   INTELLIGENCE = 'Intelligence',
   JOBS = 'Jobs',
   LISTS = 'Lists',
+  INVESTORS = 'Investors',
   LOGS = 'Logs'
 }
 
@@ -514,6 +517,7 @@ const App: React.FC = () => {
       case View.INTELLIGENCE: return <Intelligence directoryCompanies={companies.map(c => c.name)} />;
       case View.JOBS: return <JobBoard companies={companies} onUpdateCompanies={handleCompaniesUpdate} />;
       case View.LISTS: return <CompanyLists companies={companies} />;
+      case View.INVESTORS: return <Investors companies={companies} onSelectCompany={setSelectedCompany} />;
       case View.LOGS: return <Logs onBack={() => setCurrentView(View.DIRECTORY)} />;
       default: return <div>View not found</div>;
     }
@@ -547,6 +551,9 @@ const App: React.FC = () => {
           </button>
           <button onClick={() => { setCurrentView(View.LISTS); setSelectedCompany(null); }} className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg transition-colors ${currentView === View.LISTS ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800'}`}>
             <ListChecks size={20} /> {isSidebarOpen && <span>Company Lists</span>}
+          </button>
+          <button onClick={() => { setCurrentView(View.INVESTORS); setSelectedCompany(null); }} className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg transition-colors ${currentView === View.INVESTORS ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800'}`}>
+            <TrendingUp size={20} /> {isSidebarOpen && <span>Investors & VC</span>}
           </button>
           <button onClick={() => { setCurrentView(View.LOGS); setSelectedCompany(null); }} className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg transition-colors ${currentView === View.LOGS ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800'}`}>
             <ScrollText size={20} /> {isSidebarOpen && <span>System Logs</span>}
