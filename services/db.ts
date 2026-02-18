@@ -159,7 +159,7 @@ export const db = {
     if (!checkOffline()) {
       try {
         const companyCollection = collection(dbInstance, COLLECTIONS.COMPANIES);
-        const snapshot = await withTimeout<QuerySnapshot<DocumentData>>(getDocs(companyCollection), 15000);
+        const snapshot = await withTimeout<QuerySnapshot<DocumentData>>(getDocs(companyCollection), 5000);
 
         if (!snapshot.empty) {
           firestoreCompanies = snapshot.docs.map(doc => {

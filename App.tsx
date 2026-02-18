@@ -104,7 +104,9 @@ const App: React.FC = () => {
         setIsAppLoading(false);
       }
     };
-    initApp();
+    // Safety net: never show loading spinner for more than 8 seconds
+    const safetyTimer = setTimeout(() => setIsAppLoading(false), 8000);
+    initApp().finally(() => clearTimeout(safetyTimer));
   }, []);
 
   const runBackgroundScan = async (initialCompaniesForReference: Company[]) => {
