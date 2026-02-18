@@ -32,7 +32,7 @@ const CATEGORY_COLORS: Record<string, string> = {
 };
 
 const Logs: React.FC<LogsProps> = ({ onBack, companies, onRefreshFromFirestore }) => {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(() => sessionStorage.getItem('stablemap_logs_auth') === 'true');
   const [passwordInput, setPasswordInput] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const [isFirstTime, setIsFirstTime] = useState(false);
@@ -133,13 +133,14 @@ const Logs: React.FC<LogsProps> = ({ onBack, companies, onRefreshFromFirestore }
     if (passwordInput.length < 4) { setPasswordError('Password must be at least 4 characters'); return; }
     if (passwordInput !== confirmPassword) { setPasswordError('Passwords do not match'); return; }
     localStorage.setItem(STORAGE_KEY_PASSWORD, passwordInput);
+    sessionStorage.setItem('stablemap_logs_auth', 'true');
     setIsAuthenticated(true);
     setPasswordError('');
   };
 
   const handleLogin = () => {
     const storedPassword = localStorage.getItem(STORAGE_KEY_PASSWORD);
-    if (passwordInput === storedPassword) { setIsAuthenticated(true); setPasswordError(''); }
+    if (passwordInput === storedPassword) { sessionStorage.setItem('stablemap_logs_auth', 'true'); setIsAuthenticated(true); setPasswordError(''); }
     else setPasswordError('Incorrect password');
   };
 
