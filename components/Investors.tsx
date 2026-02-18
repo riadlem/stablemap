@@ -1,5 +1,5 @@
-import React, { useMemo, useState, useRef } from 'react';
-import { Search, TrendingUp, ChevronDown, ChevronUp, Building2, DollarSign, Users, Plus, Loader2, Telescope, Check, X, UserPlus, Link, Upload, ExternalLink, FileSpreadsheet } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { Search, TrendingUp, ChevronDown, ChevronUp, Building2, DollarSign, Users, Plus, Loader2, Telescope, Check, X, UserPlus, Link, ExternalLink, FileSpreadsheet, ArrowRight } from 'lucide-react';
 import { Company } from '../types';
 import { lookupInvestorPortfolio, lookupInvestorPortfolioFromUrl, extractPortfolioFromText, DiscoveredPortfolioCompany } from '../services/claudeService';
 
@@ -8,6 +8,7 @@ interface InvestorsProps {
   onSelectCompany: (company: Company) => void;
   onAddCompany: (name: string) => Promise<void>;
   onAddCompanyWithInvestor: (companyName: string, investorName: string) => Promise<void>;
+  onNavigateToVCImport: () => void;
 }
 
 interface InvestorEntry {
@@ -125,7 +126,7 @@ const handleLogoError = (e: React.SyntheticEvent<HTMLImageElement>, name: string
   }
 };
 
-const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAddCompany, onAddCompanyWithInvestor }) => {
+const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAddCompany, onAddCompanyWithInvestor, onNavigateToVCImport }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [expandedInvestor, setExpandedInvestor] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<'portfolio' | 'alpha'>('portfolio');
@@ -147,13 +148,6 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
   const [addingCompanies, setAddingCompanies] = useState<Set<string>>(new Set());
   const [addedCompanies, setAddedCompanies] = useState<Set<string>>(new Set());
 
-  // CSV upload state
-  const [csvResults, setCsvResults] = useState<{ investorName: string; companies: DiscoveredPortfolioCompany[] }[] | null>(null);
-  const [csvProcessing, setCsvProcessing] = useState(false);
-  const [csvProgress, setCsvProgress] = useState({ current: 0, total: 0, currentName: '' });
-  const [csvSelected, setCsvSelected] = useState<Map<string, Set<string>>>(new Map()); // investorName -> Set<companyName>
-  const [csvAddingAll, setCsvAddingAll] = useState(false);
-  const csvInputRef = useRef<HTMLInputElement>(null);
 
   const existingCompanyNames = useMemo(() => companies.map(c => c.name), [companies]);
 
@@ -316,79 +310,6 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
     ];
   };
 
-  // CSV parsing and batch processing
-  const handleCsvUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const text = await file.text();
-    const lines = text.split(/\r?\n/).filter(l => l.trim());
-    if (lines.length < 2) return;
-
-    // Parse header — flexible matching
-    const header = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/['"]/g, ''));
-    const nameCol = header.findIndex(h => /^(name|fund|investor|vc|firm)$/i.test(h));
-    const urlCol = header.findIndex(h => /^(url|website|domain|link|portfolio.?url)$/i.test(h));
-
-    if (nameCol === -1 && urlCol === -1) {
-      alert('CSV must have a "name" or "url" column header.');
-      return;
-    }
-
-    // Parse rows
-    const rows: { name: string; url: string }[] = [];
-    for (let i = 1; i < lines.length; i++) {
-      // Simple CSV split (handles quoted fields)
-      const cols = lines[i].match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g)?.map(c => c.replace(/^"|"$/g, '').trim()) || lines[i].split(',').map(c => c.trim());
-      const name = nameCol >= 0 ? (cols[nameCol] || '') : '';
-      let url = urlCol >= 0 ? (cols[urlCol] || '') : '';
-      if (url && !url.startsWith('http')) url = `https://${url}`;
-      if (name || url) rows.push({ name, url });
-    }
-
-    if (rows.length === 0) return;
-
-    setCsvProcessing(true);
-    setCsvResults([]);
-    setCsvProgress({ current: 0, total: rows.length, currentName: '' });
-
-    const allResults: { investorName: string; companies: DiscoveredPortfolioCompany[] }[] = [];
-
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      const label = row.name || new URL(row.url).hostname.replace('www.', '');
-      setCsvProgress({ current: i + 1, total: rows.length, currentName: label });
-
-      try {
-        let results: DiscoveredPortfolioCompany[] = [];
-        if (row.url) {
-          const { results: urlResults, fetchFailed } = await lookupInvestorPortfolioFromUrl(row.url, row.name, existingCompanyNames);
-          if (!fetchFailed) results = urlResults;
-        }
-        // If URL failed or wasn't provided, try name lookup
-        if (results.length === 0 && row.name) {
-          results = await lookupInvestorPortfolio(row.name, existingCompanyNames);
-        }
-        if (results.length > 0) {
-          allResults.push({ investorName: label, companies: results });
-        }
-      } catch (err) {
-        console.error(`CSV lookup failed for ${label}:`, err);
-      }
-
-      // Update results incrementally
-      setCsvResults([...allResults]);
-    }
-
-    setCsvProcessing(false);
-    // Pre-select all discovered companies for convenience
-    const selection = new Map<string, Set<string>>();
-    allResults.forEach(g => selection.set(g.investorName, new Set(g.companies.map(c => c.name))));
-    setCsvSelected(selection);
-    // Reset file input
-    if (csvInputRef.current) csvInputRef.current.value = '';
-  };
-
   const handleAddToDirectory = async (companyName: string, investorName?: string) => {
     setAddingCompanies(prev => new Set(prev).add(companyName));
     try {
@@ -405,52 +326,6 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
         return next;
       });
     }
-  };
-
-  // CSV selection helpers
-  const toggleCsvSelect = (investorName: string, companyName: string) => {
-    setCsvSelected(prev => {
-      const next = new Map<string, Set<string>>(prev);
-      const existing = next.get(investorName);
-      const set = new Set<string>(existing ? Array.from(existing) : []);
-      if (set.has(companyName)) set.delete(companyName);
-      else set.add(companyName);
-      next.set(investorName, set);
-      return next;
-    });
-  };
-
-  const toggleAllForInvestor = (investorName: string, companyNames: string[]) => {
-    setCsvSelected(prev => {
-      const next = new Map<string, Set<string>>(prev);
-      const current = next.get(investorName) || new Set<string>();
-      const allSelected = companyNames.every(n => current.has(n));
-      next.set(investorName, allSelected ? new Set() : new Set(companyNames));
-      return next;
-    });
-  };
-
-  const csvSelectedCount = useMemo(() => {
-    let count = 0;
-    csvSelected.forEach(set => { count += set.size; });
-    return count;
-  }, [csvSelected]);
-
-  const handleAddSelectedFromCsv = async () => {
-    setCsvAddingAll(true);
-    const entries: { companyName: string; investorName: string }[] = [];
-    csvSelected.forEach((companyNames, investorName) => {
-      companyNames.forEach(companyName => {
-        if (!existingCompanyNames.some(n => n.toLowerCase() === companyName.toLowerCase())) {
-          entries.push({ companyName, investorName });
-        }
-      });
-    });
-
-    for (const { companyName, investorName } of entries) {
-      await handleAddToDirectory(companyName, investorName);
-    }
-    setCsvAddingAll(false);
   };
 
   const dismissLookupResults = () => {
@@ -644,143 +519,24 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
         )}
       </div>
 
-      {/* CSV Upload */}
-      <div className="bg-white border border-slate-200 rounded-xl p-5">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-              <FileSpreadsheet size={16} className="text-indigo-600" /> Bulk Import from CSV
-            </h3>
+      {/* CSV Import Link */}
+      <button
+        onClick={onNavigateToVCImport}
+        className="w-full bg-white border border-slate-200 rounded-xl p-5 flex items-center justify-between hover:border-indigo-300 hover:shadow-sm transition-all group"
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-indigo-50 rounded-lg flex items-center justify-center group-hover:bg-indigo-100 transition-colors">
+            <FileSpreadsheet size={20} className="text-indigo-600" />
+          </div>
+          <div className="text-left">
+            <h3 className="text-sm font-bold text-slate-900">Import VC Portfolio from CSV</h3>
             <p className="text-xs text-slate-500 mt-0.5">
-              Upload a CSV with columns: <code className="bg-slate-100 px-1 rounded">name</code> and/or <code className="bg-slate-100 px-1 rounded">url</code> (domain or portfolio page URL)
+              Enter a VC name and URL, then bulk-import their portfolio companies via CSV
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <input
-              ref={csvInputRef}
-              type="file"
-              accept=".csv,.tsv,.txt"
-              onChange={handleCsvUpload}
-              className="hidden"
-            />
-            <button
-              onClick={() => csvInputRef.current?.click()}
-              disabled={csvProcessing}
-              className="flex items-center gap-2 px-3 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 transition-colors disabled:opacity-50"
-            >
-              {csvProcessing ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
-              {csvProcessing ? `Processing ${csvProgress.current}/${csvProgress.total}...` : 'Upload CSV'}
-            </button>
-          </div>
         </div>
-
-        {/* CSV progress */}
-        {csvProcessing && (
-          <div className="mt-3">
-            <div className="flex items-center justify-between text-xs text-slate-500 mb-1">
-              <span>Analyzing: {csvProgress.currentName}</span>
-              <span>{csvProgress.current}/{csvProgress.total}</span>
-            </div>
-            <div className="w-full bg-slate-100 rounded-full h-1.5">
-              <div
-                className="bg-indigo-600 h-1.5 rounded-full transition-all"
-                style={{ width: `${(csvProgress.current / csvProgress.total) * 100}%` }}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* CSV results with checkboxes */}
-        {csvResults !== null && csvResults.length > 0 && !csvProcessing && (
-          <div className="mt-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <p className="text-sm font-bold text-slate-900">
-                Found portfolio companies for {csvResults.length} {csvResults.length === 1 ? 'investor' : 'investors'} — select which to add
-              </p>
-              <button onClick={() => { setCsvResults(null); setCsvSelected(new Map()); }} className="text-slate-400 hover:text-slate-600">
-                <X size={16} />
-              </button>
-            </div>
-            {csvResults.map(group => {
-              const selected = csvSelected.get(group.investorName) || new Set();
-              const eligibleNames = group.companies.map(c => c.name).filter(n => !existingCompanyNames.some(e => e.toLowerCase() === n.toLowerCase()));
-              const allSelected = eligibleNames.length > 0 && eligibleNames.every(n => selected.has(n));
-              return (
-                <div key={group.investorName} className="bg-slate-50 border border-slate-200 rounded-lg p-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={allSelected}
-                        onChange={() => toggleAllForInvestor(group.investorName, eligibleNames)}
-                        className="w-3.5 h-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                      />
-                      <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
-                        {group.investorName} ({group.companies.length})
-                      </span>
-                    </label>
-                    <span className="text-[10px] text-slate-400">
-                      {selected.size} selected
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {group.companies.map(company => {
-                      const isInDir = existingCompanyNames.some(n => n.toLowerCase() === company.name.toLowerCase()) || addedCompanies.has(company.name);
-                      const isChecked = selected.has(company.name);
-                      return (
-                        <div key={company.name} className={`flex items-start gap-2 p-3 bg-white rounded-lg border ${isChecked ? 'border-indigo-300 ring-1 ring-indigo-200' : 'border-slate-200'} transition-all`}>
-                          {!isInDir && (
-                            <input
-                              type="checkbox"
-                              checked={isChecked}
-                              onChange={() => toggleCsvSelect(group.investorName, company.name)}
-                              className="w-3.5 h-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 mt-0.5 shrink-0"
-                            />
-                          )}
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center justify-between">
-                              <p className="font-semibold text-slate-900 text-sm">{company.name}</p>
-                              {isInDir && (
-                                <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-lg shrink-0">
-                                  <Check size={10} /> In Directory
-                                </span>
-                              )}
-                            </div>
-                            <p className="text-xs text-slate-500 mt-0.5 leading-snug">{company.description}</p>
-                            <div className="flex flex-wrap gap-1.5 mt-1.5">
-                              <span className="text-[10px] font-medium bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded">{company.category}</span>
-                              {company.fundingStage && <span className="text-[10px] font-medium bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded">{company.fundingStage}</span>}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
-
-            {/* Add Selected button */}
-            <div className="flex items-center justify-between pt-2 border-t border-slate-200">
-              <p className="text-xs text-slate-500">
-                {csvSelectedCount} {csvSelectedCount === 1 ? 'company' : 'companies'} selected across {csvSelected.size} {csvSelected.size === 1 ? 'investor' : 'investors'}
-                {csvSelectedCount > 0 && ' — each will be linked to its investor'}
-              </p>
-              <button
-                onClick={handleAddSelectedFromCsv}
-                disabled={csvSelectedCount === 0 || csvAddingAll}
-                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700 transition-colors disabled:opacity-50"
-              >
-                {csvAddingAll ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-                {csvAddingAll ? 'Adding...' : `Add ${csvSelectedCount} to Directory`}
-              </button>
-            </div>
-          </div>
-        )}
-        {csvResults !== null && csvResults.length === 0 && !csvProcessing && (
-          <p className="mt-3 text-xs text-slate-400 italic">No crypto/digital-asset portfolio companies found for any investors in the CSV.</p>
-        )}
-      </div>
+        <ArrowRight size={18} className="text-slate-400 group-hover:text-indigo-600 transition-colors" />
+      </button>
 
       {/* Stats */}
       <div className="grid grid-cols-3 gap-4">
