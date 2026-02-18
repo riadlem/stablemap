@@ -573,23 +573,40 @@ export const lookupInvestorPortfolio = async (
     ? `\n\nEXCLUDE these companies already in our directory: ${existingCompanyNames.join(', ')}`
     : '';
 
-  const prompt = `You are an expert on venture capital and investment in the digital asset ecosystem.
+  const prompt = `You are an expert on venture capital, private equity, and investment in the Web3, crypto, and digital asset ecosystem. You have deep knowledge of fund portfolios, including smaller and regional funds.
 
-List all known portfolio companies of "${investorName}" that operate in stablecoins, digital assets, blockchain infrastructure, crypto payments, DeFi, crypto custody, or tokenization.${excludeList}
+I want to find ALL portfolio companies of "${investorName}" that are relevant to the broader crypto, Web3, and digital asset space. This includes but is not limited to:
+- Stablecoins and digital asset issuers
+- Blockchain infrastructure and L1/L2 protocols
+- Crypto payments and on/off ramps
+- DeFi protocols and yield platforms
+- Crypto custody and security
+- Web3 applications, NFT platforms, metaverse
+- Tokenization and RWA (real-world assets)
+- Crypto exchanges and trading platforms
+- Blockchain analytics and compliance
+- Digital identity and decentralized identity
+- DAOs and governance tooling
+- Crypto-native fintech and neobanks${excludeList}
 
-Return a JSON array of objects with:
+First, think about what you know about "${investorName}":
+- Are they a dedicated crypto/Web3 fund, or a generalist with crypto exposure?
+- Do they have a specific Web3 or digital assets vehicle/arm?
+- What investments have been publicly announced or reported?
+
+Then return a JSON array of objects with:
 - "name": string (company name)
-- "description": string (1 sentence — what the company does)
-- "category": string (one of: "Issuer", "Infrastructure", "Wallet", "Payments", "DeFi", "Custody", "Banks", "Other")
-- "fundingStage": string (e.g. "Seed", "Series A", "Series B", "Growth", "Unknown")
+- "description": string (1 sentence — what the company does in the crypto/Web3 space)
+- "category": string (one of: "Issuer", "Infrastructure", "Wallet", "Payments", "DeFi", "Custody", "Banks", "Exchange", "Analytics", "Web3", "Other")
+- "fundingStage": string (e.g. "Seed", "Pre-Seed", "Series A", "Series B", "Growth", "Unknown")
 - "investmentDate": string (YYYY-MM-DD if known, otherwise omit)
 
-IMPORTANT: Only include companies you are confident "${investorName}" has actually invested in. Do NOT fabricate investments. If you don't know of any, return an empty array [].
+Include companies even if the investment details are partial — it is better to surface a real investment with incomplete metadata than to miss it. Only omit a company if you genuinely have no basis to believe "${investorName}" invested in it.
 RETURN ONLY RAW JSON ARRAY.`;
 
   try {
     return await executeWithRetry('lookupInvestorPortfolio', async () => {
-      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.3);
+      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.5);
       const json = parseJSON(text);
       if (!Array.isArray(json)) {
         console.warn('lookupInvestorPortfolio: Claude returned non-array for', investorName);
