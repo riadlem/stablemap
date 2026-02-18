@@ -309,6 +309,94 @@ const App: React.FC = () => {
     } finally { setAddingCompany(false); }
   };
 
+  const handleAddCompanyWithInvestor = async (companyName: string, investorName: string) => {
+    const normalizedName = companyName.trim();
+    const newId = generateCompanyId(normalizedName);
+    const existing = companies.find(c => c.id === newId);
+
+    if (existing) {
+      // Company already exists — just ensure the investor partner is linked
+      const hasInvestor = existing.partners.some(p =>
+        p.name.toLowerCase() === investorName.toLowerCase() && p.type === 'Investor'
+      );
+      if (!hasInvestor) {
+        const investorPartner: Partner = {
+          name: investorName,
+          type: 'Investor',
+          description: `Investor in ${normalizedName}.`,
+        };
+        setCompanies(current => {
+          const updated = current.map(c =>
+            c.id === newId ? { ...c, partners: [...c.partners, investorPartner] } : c
+          );
+          db.saveCompanies(updated).catch(console.error);
+          return updated;
+        });
+      }
+      return;
+    }
+
+    // Create skeleton with the investor pre-linked
+    const investorPartner: Partner = {
+      name: investorName,
+      type: 'Investor',
+      description: `Investor in ${normalizedName}.`,
+    };
+    const skeleton: Company = {
+      id: newId,
+      name: normalizedName,
+      logoPlaceholder: `https://ui-avatars.com/api/?name=${encodeURIComponent(normalizedName)}&background=f8fafc&color=64748b&size=128`,
+      description: 'Fetching intelligence...',
+      categories: [Category.INFRASTRUCTURE],
+      partners: [investorPartner],
+      website: '',
+      headquarters: 'Pending...',
+      region: 'Global',
+      focus: 'Crypto-Second'
+    };
+    setCompanies(current => {
+      const updated = [skeleton, ...current];
+      db.saveCompanies(updated).catch(console.error);
+      return updated;
+    });
+
+    try {
+      const enriched = await enrichCompanyData(normalizedName);
+      if (enriched.partners && enriched.partners.length > 0) await syncPartnershipsToNews(normalizedName, enriched.partners);
+
+      // Merge enriched partners with the pre-linked investor
+      const enrichedPartners = enriched.partners || [];
+      const alreadyHasInvestor = enrichedPartners.some(p =>
+        p.name.toLowerCase() === investorName.toLowerCase()
+      );
+      const mergedPartners = alreadyHasInvestor ? enrichedPartners : [investorPartner, ...enrichedPartners];
+
+      let logoUrl = skeleton.logoPlaceholder;
+      if (enriched.website) {
+        const domain = enriched.website.replace(/^https?:\/\//, '').split('/')[0];
+        logoUrl = `https://logo.clearbit.com/${domain}`;
+      }
+      const finalDescription = enriched.description || 'Basic profile created. Intelligence analysis currently unavailable due to system load.';
+
+      setCompanies(current => {
+        const updated = current.map(c =>
+          c.id === newId ? { ...c, ...enriched, partners: mergedPartners, description: finalDescription, logoPlaceholder: logoUrl } : c
+        );
+        db.saveCompanies(updated).catch(console.error);
+        return updated;
+      });
+    } catch (e) {
+      console.warn(`Enrichment failed for ${normalizedName}, keeping skeleton with investor link.`);
+      setCompanies(current => {
+        const updated = current.map(c =>
+          c.id === newId ? { ...c, description: 'Intelligence unavailable. Try refreshing later.' } : c
+        );
+        db.saveCompanies(updated).catch(console.error);
+        return updated;
+      });
+    }
+  };
+
   const handleRefreshPending = async () => {
     const pendingKeywords = ['Fetching', 'Intelligence unavailable', 'Queued', 'Analysis unavailable'];
     const pendingCompanies = companies.filter(c => 
@@ -517,7 +605,7 @@ const App: React.FC = () => {
       case View.INTELLIGENCE: return <Intelligence directoryCompanies={companies.map(c => c.name)} />;
       case View.JOBS: return <JobBoard companies={companies} onUpdateCompanies={handleCompaniesUpdate} />;
       case View.LISTS: return <CompanyLists companies={companies} />;
-      case View.INVESTORS: return <Investors companies={companies} onSelectCompany={setSelectedCompany} onAddCompany={handleAddCompany} />;
+      case View.INVESTORS: return <Investors companies={companies} onSelectCompany={setSelectedCompany} onAddCompany={handleAddCompany} onAddCompanyWithInvestor={handleAddCompanyWithInvestor} />;
       case View.LOGS: return <Logs onBack={() => setCurrentView(View.DIRECTORY)} />;
       default: return <div>View not found</div>;
     }

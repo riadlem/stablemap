@@ -7,6 +7,7 @@ interface InvestorsProps {
   companies: Company[];
   onSelectCompany: (company: Company) => void;
   onAddCompany: (name: string) => Promise<void>;
+  onAddCompanyWithInvestor: (companyName: string, investorName: string) => Promise<void>;
 }
 
 interface InvestorEntry {
@@ -14,7 +15,7 @@ interface InvestorEntry {
   portfolio: Company[];
 }
 
-const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAddCompany }) => {
+const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAddCompany, onAddCompanyWithInvestor }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [expandedInvestor, setExpandedInvestor] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<'portfolio' | 'alpha'>('portfolio');
@@ -40,6 +41,8 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
   const [csvResults, setCsvResults] = useState<{ investorName: string; companies: DiscoveredPortfolioCompany[] }[] | null>(null);
   const [csvProcessing, setCsvProcessing] = useState(false);
   const [csvProgress, setCsvProgress] = useState({ current: 0, total: 0, currentName: '' });
+  const [csvSelected, setCsvSelected] = useState<Map<string, Set<string>>>(new Map()); // investorName -> Set<companyName>
+  const [csvAddingAll, setCsvAddingAll] = useState(false);
   const csvInputRef = useRef<HTMLInputElement>(null);
 
   const existingCompanyNames = useMemo(() => companies.map(c => c.name), [companies]);
@@ -268,14 +271,22 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
     }
 
     setCsvProcessing(false);
+    // Pre-select all discovered companies for convenience
+    const selection = new Map<string, Set<string>>();
+    allResults.forEach(g => selection.set(g.investorName, new Set(g.companies.map(c => c.name))));
+    setCsvSelected(selection);
     // Reset file input
     if (csvInputRef.current) csvInputRef.current.value = '';
   };
 
-  const handleAddToDirectory = async (companyName: string) => {
+  const handleAddToDirectory = async (companyName: string, investorName?: string) => {
     setAddingCompanies(prev => new Set(prev).add(companyName));
     try {
-      await onAddCompany(companyName);
+      if (investorName) {
+        await onAddCompanyWithInvestor(companyName, investorName);
+      } else {
+        await onAddCompany(companyName);
+      }
       setAddedCompanies(prev => new Set(prev).add(companyName));
     } finally {
       setAddingCompanies(prev => {
@@ -284,6 +295,52 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
         return next;
       });
     }
+  };
+
+  // CSV selection helpers
+  const toggleCsvSelect = (investorName: string, companyName: string) => {
+    setCsvSelected(prev => {
+      const next = new Map<string, Set<string>>(prev);
+      const existing = next.get(investorName);
+      const set = new Set<string>(existing ? Array.from(existing) : []);
+      if (set.has(companyName)) set.delete(companyName);
+      else set.add(companyName);
+      next.set(investorName, set);
+      return next;
+    });
+  };
+
+  const toggleAllForInvestor = (investorName: string, companyNames: string[]) => {
+    setCsvSelected(prev => {
+      const next = new Map<string, Set<string>>(prev);
+      const current = next.get(investorName) || new Set<string>();
+      const allSelected = companyNames.every(n => current.has(n));
+      next.set(investorName, allSelected ? new Set() : new Set(companyNames));
+      return next;
+    });
+  };
+
+  const csvSelectedCount = useMemo(() => {
+    let count = 0;
+    csvSelected.forEach(set => { count += set.size; });
+    return count;
+  }, [csvSelected]);
+
+  const handleAddSelectedFromCsv = async () => {
+    setCsvAddingAll(true);
+    const entries: { companyName: string; investorName: string }[] = [];
+    csvSelected.forEach((companyNames, investorName) => {
+      companyNames.forEach(companyName => {
+        if (!existingCompanyNames.some(n => n.toLowerCase() === companyName.toLowerCase())) {
+          entries.push({ companyName, investorName });
+        }
+      });
+    });
+
+    for (const { companyName, investorName } of entries) {
+      await handleAddToDirectory(companyName, investorName);
+    }
+    setCsvAddingAll(false);
   };
 
   const dismissLookupResults = () => {
@@ -296,7 +353,7 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
   };
 
   // Reusable discovered company card
-  const DiscoveredCompanyCard: React.FC<{ company: DiscoveredPortfolioCompany }> = ({ company }) => {
+  const DiscoveredCompanyCard: React.FC<{ company: DiscoveredPortfolioCompany; investorContext?: string }> = ({ company, investorContext }) => {
     const isAdding = addingCompanies.has(company.name);
     const isAdded = addedCompanies.has(company.name) || existingCompanyNames.some(n => n.toLowerCase() === company.name.toLowerCase());
     return (
@@ -327,7 +384,7 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
             </span>
           ) : (
             <button
-              onClick={() => handleAddToDirectory(company.name)}
+              onClick={() => handleAddToDirectory(company.name, investorContext)}
               disabled={isAdding}
               className="flex items-center gap-1 text-[10px] font-bold text-indigo-600 hover:text-white hover:bg-indigo-600 bg-indigo-50 px-2 py-1.5 rounded-lg transition-colors disabled:opacity-50"
             >
@@ -470,7 +527,7 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {lookupResults.map(company => (
-                <DiscoveredCompanyCard key={company.name} company={company} />
+                <DiscoveredCompanyCard key={company.name} company={company} investorContext={lookupInvestorLabel} />
               ))}
             </div>
           </div>
@@ -523,27 +580,91 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
           </div>
         )}
 
-        {/* CSV results */}
+        {/* CSV results with checkboxes */}
         {csvResults !== null && csvResults.length > 0 && !csvProcessing && (
           <div className="mt-4 space-y-3">
             <div className="flex items-center justify-between">
               <p className="text-sm font-bold text-slate-900">
-                Found portfolio companies for {csvResults.length} {csvResults.length === 1 ? 'investor' : 'investors'}
+                Found portfolio companies for {csvResults.length} {csvResults.length === 1 ? 'investor' : 'investors'} — select which to add
               </p>
-              <button onClick={() => setCsvResults(null)} className="text-slate-400 hover:text-slate-600">
+              <button onClick={() => { setCsvResults(null); setCsvSelected(new Map()); }} className="text-slate-400 hover:text-slate-600">
                 <X size={16} />
               </button>
             </div>
-            {csvResults.map(group => (
-              <div key={group.investorName} className="bg-slate-50 border border-slate-200 rounded-lg p-3">
-                <p className="text-xs font-bold text-slate-700 mb-2 uppercase tracking-wider">{group.investorName} ({group.companies.length})</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {group.companies.map(company => (
-                    <DiscoveredCompanyCard key={company.name} company={company} />
-                  ))}
+            {csvResults.map(group => {
+              const selected = csvSelected.get(group.investorName) || new Set();
+              const eligibleNames = group.companies.map(c => c.name).filter(n => !existingCompanyNames.some(e => e.toLowerCase() === n.toLowerCase()));
+              const allSelected = eligibleNames.length > 0 && eligibleNames.every(n => selected.has(n));
+              return (
+                <div key={group.investorName} className="bg-slate-50 border border-slate-200 rounded-lg p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={allSelected}
+                        onChange={() => toggleAllForInvestor(group.investorName, eligibleNames)}
+                        className="w-3.5 h-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                        {group.investorName} ({group.companies.length})
+                      </span>
+                    </label>
+                    <span className="text-[10px] text-slate-400">
+                      {selected.size} selected
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {group.companies.map(company => {
+                      const isInDir = existingCompanyNames.some(n => n.toLowerCase() === company.name.toLowerCase()) || addedCompanies.has(company.name);
+                      const isChecked = selected.has(company.name);
+                      return (
+                        <div key={company.name} className={`flex items-start gap-2 p-3 bg-white rounded-lg border ${isChecked ? 'border-indigo-300 ring-1 ring-indigo-200' : 'border-slate-200'} transition-all`}>
+                          {!isInDir && (
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => toggleCsvSelect(group.investorName, company.name)}
+                              className="w-3.5 h-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 mt-0.5 shrink-0"
+                            />
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center justify-between">
+                              <p className="font-semibold text-slate-900 text-sm">{company.name}</p>
+                              {isInDir && (
+                                <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-lg shrink-0">
+                                  <Check size={10} /> In Directory
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-slate-500 mt-0.5 leading-snug">{company.description}</p>
+                            <div className="flex flex-wrap gap-1.5 mt-1.5">
+                              <span className="text-[10px] font-medium bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded">{company.category}</span>
+                              {company.fundingStage && <span className="text-[10px] font-medium bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded">{company.fundingStage}</span>}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
+
+            {/* Add Selected button */}
+            <div className="flex items-center justify-between pt-2 border-t border-slate-200">
+              <p className="text-xs text-slate-500">
+                {csvSelectedCount} {csvSelectedCount === 1 ? 'company' : 'companies'} selected across {csvSelected.size} {csvSelected.size === 1 ? 'investor' : 'investors'}
+                {csvSelectedCount > 0 && ' — each will be linked to its investor'}
+              </p>
+              <button
+                onClick={handleAddSelectedFromCsv}
+                disabled={csvSelectedCount === 0 || csvAddingAll}
+                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700 transition-colors disabled:opacity-50"
+              >
+                {csvAddingAll ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                {csvAddingAll ? 'Adding...' : `Add ${csvSelectedCount} to Directory`}
+              </button>
+            </div>
           </div>
         )}
         {csvResults !== null && csvResults.length === 0 && !csvProcessing && (
@@ -761,7 +882,7 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
                           {discovered.length > 0 && (
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                               {discovered.map(company => (
-                                <DiscoveredCompanyCard key={company.name} company={company} />
+                                <DiscoveredCompanyCard key={company.name} company={company} investorContext={inv.name} />
                               ))}
                             </div>
                           )}
