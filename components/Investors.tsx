@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { Search, TrendingUp, ChevronDown, ChevronUp, Building2, DollarSign, Users, Plus, Loader2, Telescope, Check, X, UserPlus, Link } from 'lucide-react';
+import React, { useMemo, useState, useRef } from 'react';
+import { Search, TrendingUp, ChevronDown, ChevronUp, Building2, DollarSign, Users, Plus, Loader2, Telescope, Check, X, UserPlus, Link, Upload, ExternalLink, FileSpreadsheet } from 'lucide-react';
 import { Company } from '../types';
 import { lookupInvestorPortfolio, lookupInvestorPortfolioFromUrl, extractPortfolioFromText, DiscoveredPortfolioCompany } from '../services/claudeService';
 
@@ -35,6 +35,12 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
   // Track which companies are being added
   const [addingCompanies, setAddingCompanies] = useState<Set<string>>(new Set());
   const [addedCompanies, setAddedCompanies] = useState<Set<string>>(new Set());
+
+  // CSV upload state
+  const [csvResults, setCsvResults] = useState<{ investorName: string; companies: DiscoveredPortfolioCompany[] }[] | null>(null);
+  const [csvProcessing, setCsvProcessing] = useState(false);
+  const [csvProgress, setCsvProgress] = useState({ current: 0, total: 0, currentName: '' });
+  const csvInputRef = useRef<HTMLInputElement>(null);
 
   const existingCompanyNames = useMemo(() => companies.map(c => c.name), [companies]);
 
@@ -187,6 +193,85 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
     }
   };
 
+  // Generate suggested lookup URLs for a fund name
+  const getSuggestedUrls = (name: string) => {
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    return [
+      { label: 'AngelList', url: `https://www.angellist.com/company/${slug}` },
+      { label: 'Crunchbase', url: `https://www.crunchbase.com/organization/${slug}` },
+      { label: 'PitchBook', url: `https://pitchbook.com/profiles/investor/${slug}` },
+    ];
+  };
+
+  // CSV parsing and batch processing
+  const handleCsvUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const text = await file.text();
+    const lines = text.split(/\r?\n/).filter(l => l.trim());
+    if (lines.length < 2) return;
+
+    // Parse header — flexible matching
+    const header = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/['"]/g, ''));
+    const nameCol = header.findIndex(h => /^(name|fund|investor|vc|firm)$/i.test(h));
+    const urlCol = header.findIndex(h => /^(url|website|domain|link|portfolio.?url)$/i.test(h));
+
+    if (nameCol === -1 && urlCol === -1) {
+      alert('CSV must have a "name" or "url" column header.');
+      return;
+    }
+
+    // Parse rows
+    const rows: { name: string; url: string }[] = [];
+    for (let i = 1; i < lines.length; i++) {
+      // Simple CSV split (handles quoted fields)
+      const cols = lines[i].match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g)?.map(c => c.replace(/^"|"$/g, '').trim()) || lines[i].split(',').map(c => c.trim());
+      const name = nameCol >= 0 ? (cols[nameCol] || '') : '';
+      let url = urlCol >= 0 ? (cols[urlCol] || '') : '';
+      if (url && !url.startsWith('http')) url = `https://${url}`;
+      if (name || url) rows.push({ name, url });
+    }
+
+    if (rows.length === 0) return;
+
+    setCsvProcessing(true);
+    setCsvResults([]);
+    setCsvProgress({ current: 0, total: rows.length, currentName: '' });
+
+    const allResults: { investorName: string; companies: DiscoveredPortfolioCompany[] }[] = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const label = row.name || new URL(row.url).hostname.replace('www.', '');
+      setCsvProgress({ current: i + 1, total: rows.length, currentName: label });
+
+      try {
+        let results: DiscoveredPortfolioCompany[] = [];
+        if (row.url) {
+          const { results: urlResults, fetchFailed } = await lookupInvestorPortfolioFromUrl(row.url, row.name, existingCompanyNames);
+          if (!fetchFailed) results = urlResults;
+        }
+        // If URL failed or wasn't provided, try name lookup
+        if (results.length === 0 && row.name) {
+          results = await lookupInvestorPortfolio(row.name, existingCompanyNames);
+        }
+        if (results.length > 0) {
+          allResults.push({ investorName: label, companies: results });
+        }
+      } catch (err) {
+        console.error(`CSV lookup failed for ${label}:`, err);
+      }
+
+      // Update results incrementally
+      setCsvResults([...allResults]);
+    }
+
+    setCsvProcessing(false);
+    // Reset file input
+    if (csvInputRef.current) csvInputRef.current.value = '';
+  };
+
   const handleAddToDirectory = async (companyName: string) => {
     setAddingCompanies(prev => new Set(prev).add(companyName));
     try {
@@ -319,13 +404,41 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
             <p className="text-sm font-bold text-orange-900 mb-1">
               Could not automatically fetch portfolio data{lookupInvestorLabel ? ` for "${lookupInvestorLabel}"` : ''}
             </p>
-            <p className="text-xs text-orange-700 mb-3">
-              The site may block automated access or use JavaScript rendering. Copy-paste the portfolio page content from your browser below.
+            <p className="text-xs text-orange-700 mb-2">
+              Visit one of these sources, copy the portfolio page content, and paste below:
             </p>
+
+            {/* Suggested source links */}
+            {lookupInvestorLabel && (
+              <div className="flex flex-wrap gap-2 mb-3">
+                {getSuggestedUrls(lookupInvestorLabel).map(s => (
+                  <a
+                    key={s.label}
+                    href={s.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-orange-700 bg-white border border-orange-300 px-2.5 py-1 rounded-lg hover:bg-orange-100 transition-colors"
+                  >
+                    {s.label} <ExternalLink size={10} />
+                  </a>
+                ))}
+                {newInvestorUrl && (
+                  <a
+                    href={normalizeUrl(newInvestorUrl)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-orange-700 bg-white border border-orange-300 px-2.5 py-1 rounded-lg hover:bg-orange-100 transition-colors"
+                  >
+                    Fund Website <ExternalLink size={10} />
+                  </a>
+                )}
+              </div>
+            )}
+
             <textarea
               value={pastedContent}
               onChange={e => setPastedContent(e.target.value)}
-              placeholder={"Open the investor's portfolio page in your browser, select all (Ctrl+A), copy (Ctrl+C), and paste here.\n\nFor example, go to https://www.50partners.fr/ → portfolio section → select all text → paste here."}
+              placeholder={"1. Click one of the links above to open the investor's portfolio page\n2. Select all (Ctrl+A / Cmd+A)\n3. Copy (Ctrl+C / Cmd+C)\n4. Paste here (Ctrl+V / Cmd+V)"}
               className="w-full h-36 px-3 py-2 text-xs border border-orange-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white placeholder-orange-300 resize-y font-mono"
             />
             <div className="flex items-center justify-between mt-2">
@@ -361,6 +474,80 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
               ))}
             </div>
           </div>
+        )}
+      </div>
+
+      {/* CSV Upload */}
+      <div className="bg-white border border-slate-200 rounded-xl p-5">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+              <FileSpreadsheet size={16} className="text-indigo-600" /> Bulk Import from CSV
+            </h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Upload a CSV with columns: <code className="bg-slate-100 px-1 rounded">name</code> and/or <code className="bg-slate-100 px-1 rounded">url</code> (domain or portfolio page URL)
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              ref={csvInputRef}
+              type="file"
+              accept=".csv,.tsv,.txt"
+              onChange={handleCsvUpload}
+              className="hidden"
+            />
+            <button
+              onClick={() => csvInputRef.current?.click()}
+              disabled={csvProcessing}
+              className="flex items-center gap-2 px-3 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 transition-colors disabled:opacity-50"
+            >
+              {csvProcessing ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+              {csvProcessing ? `Processing ${csvProgress.current}/${csvProgress.total}...` : 'Upload CSV'}
+            </button>
+          </div>
+        </div>
+
+        {/* CSV progress */}
+        {csvProcessing && (
+          <div className="mt-3">
+            <div className="flex items-center justify-between text-xs text-slate-500 mb-1">
+              <span>Analyzing: {csvProgress.currentName}</span>
+              <span>{csvProgress.current}/{csvProgress.total}</span>
+            </div>
+            <div className="w-full bg-slate-100 rounded-full h-1.5">
+              <div
+                className="bg-indigo-600 h-1.5 rounded-full transition-all"
+                style={{ width: `${(csvProgress.current / csvProgress.total) * 100}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* CSV results */}
+        {csvResults !== null && csvResults.length > 0 && !csvProcessing && (
+          <div className="mt-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-bold text-slate-900">
+                Found portfolio companies for {csvResults.length} {csvResults.length === 1 ? 'investor' : 'investors'}
+              </p>
+              <button onClick={() => setCsvResults(null)} className="text-slate-400 hover:text-slate-600">
+                <X size={16} />
+              </button>
+            </div>
+            {csvResults.map(group => (
+              <div key={group.investorName} className="bg-slate-50 border border-slate-200 rounded-lg p-3">
+                <p className="text-xs font-bold text-slate-700 mb-2 uppercase tracking-wider">{group.investorName} ({group.companies.length})</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {group.companies.map(company => (
+                    <DiscoveredCompanyCard key={company.name} company={company} />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {csvResults !== null && csvResults.length === 0 && !csvProcessing && (
+          <p className="mt-3 text-xs text-slate-400 italic">No crypto/digital-asset portfolio companies found for any investors in the CSV.</p>
         )}
       </div>
 
