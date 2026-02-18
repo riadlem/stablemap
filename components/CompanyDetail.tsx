@@ -1,8 +1,9 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Company, Job, Partner, CompanyFocus, NewsItem, classifyNewsSourceType, NewsSourceType } from '../types';
 import { ArrowLeft, Briefcase, Handshake, ExternalLink, Share2, Sparkles, Building, MapPin, Building2, Globe, RefreshCw, Trash2, Edit2, Check, X, Newspaper, Plus, Flag, Ban, DollarSign, TrendingUp, Users, UserPlus, Tag } from 'lucide-react';
 import { findJobOpenings } from "../services/claudeService";
+import { db } from '../services/db';
 import { isJobRecent } from '../constants';
 import AddNewsModal from './AddNewsModal';
 import JobDetailModal from './JobDetailModal';
@@ -63,11 +64,33 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
   // Partner add-to-directory state
   const [addingPartner, setAddingPartner] = useState<string | null>(null);
 
-  // Combine fetched news (from company.recentNews) if available
-  const displayNews = useMemo(() => {
-      // Sort news if available
-      return (company.recentNews || []).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [company.recentNews]);
+  // News: company.recentNews merged with global store items that mention this company
+  const [displayNews, setDisplayNews] = useState<NewsItem[]>(
+    (company.recentNews || []).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+  );
+
+  useEffect(() => {
+    const nameLower = company.name.toLowerCase();
+    db.getNews().then(globalNews => {
+      const matching = globalNews.filter(n =>
+        n.relatedCompanies.some(rc => rc.toLowerCase() === nameLower)
+      );
+      const base = company.recentNews || [];
+      const seenIds = new Set(base.map(n => n.id));
+      const merged = [...base];
+      matching.forEach(n => {
+        if (!seenIds.has(n.id)) {
+          seenIds.add(n.id);
+          merged.push(n);
+        }
+      });
+      merged.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      setDisplayNews(merged);
+    }).catch(() => {
+      // Fallback: just use recentNews
+      setDisplayNews((company.recentNews || []).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+    });
+  }, [company.id, company.name, company.recentNews]);
 
   const fetchJobs = async () => {
     setLoadingJobs(true);
