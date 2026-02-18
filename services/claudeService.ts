@@ -626,53 +626,64 @@ export const lookupInvestorPortfolioFromUrl = async (
   url: string,
   investorName: string,
   existingCompanyNames: string[]
-): Promise<DiscoveredPortfolioCompany[]> => {
+): Promise<{ results: DiscoveredPortfolioCompany[]; fetchFailed: boolean }> => {
   const pageContent = await fetchUrlContent(url);
 
   if (!pageContent || pageContent.content.length < 50) {
-    logger.warn('api', `Could not fetch content from ${url}, falling back to name lookup`);
-    return lookupInvestorPortfolio(investorName || 'unknown fund', existingCompanyNames);
+    logger.warn('api', `Could not fetch content from ${url} (blocked or empty)`);
+    return { results: [], fetchFailed: true };
   }
 
-  const truncated = pageContent.content.length > 12000
-    ? pageContent.content.substring(0, 12000) + '\n[truncated]'
-    : pageContent.content;
+  const results = await extractPortfolioFromText(
+    pageContent.content,
+    investorName || undefined,
+    existingCompanyNames,
+    `Fetched from ${url}\nPage title: ${pageContent.title}`
+  );
+  return { results, fetchFailed: false };
+};
+
+export const extractPortfolioFromText = async (
+  text: string,
+  investorName: string | undefined,
+  existingCompanyNames: string[],
+  sourceLabel?: string
+): Promise<DiscoveredPortfolioCompany[]> => {
+  const truncated = text.length > 12000
+    ? text.substring(0, 12000) + '\n[truncated]'
+    : text;
 
   const excludeList = existingCompanyNames.length > 0
     ? `\n\nEXCLUDE these companies already in our directory: ${existingCompanyNames.join(', ')}`
     : '';
 
-  const prompt = `You are analyzing the portfolio/investments page of a venture capital or investment firm${investorName ? ` ("${investorName}")` : ''}.
+  const prompt = `You are analyzing content from a venture capital or investment firm${investorName ? ` ("${investorName}")` : ''} to extract their portfolio companies.
 
-Here is the page content fetched from ${url}:
-
+${sourceLabel ? `Source: ${sourceLabel}\n` : ''}Content:
 ---
-Page title: ${pageContent.title}
-
 ${truncated}
 ---
 
-Extract ALL portfolio companies from this page that operate in or are relevant to the crypto, Web3, blockchain, digital assets, stablecoins, DeFi, or fintech space.
+Extract ALL portfolio companies from this content that operate in or are relevant to the crypto, Web3, blockchain, digital assets, stablecoins, DeFi, or fintech space.
 
-For EACH company found on the page, determine if it's relevant to our scope (crypto/Web3/digital assets/blockchain/fintech). Include companies even if their crypto relevance isn't obvious from the page alone — we want to cast a wide net and let the user decide.${excludeList}
+For EACH company found, determine if it's relevant to our scope (crypto/Web3/digital assets/blockchain/fintech). Include companies even if their crypto relevance isn't obvious — we want to cast a wide net and let the user decide.${excludeList}
 
 Return a JSON array of objects with:
-- "name": string (company name exactly as shown on the page)
-- "description": string (1 sentence — what the company does, based on page context or your knowledge)
+- "name": string (company name exactly as shown in the content)
+- "description": string (1 sentence — what the company does, based on context or your knowledge)
 - "category": string (one of: "Issuer", "Infrastructure", "Wallet", "Payments", "DeFi", "Custody", "Banks", "Exchange", "Analytics", "Web3", "Fintech", "Other")
 - "fundingStage": string (e.g. "Seed", "Pre-Seed", "Series A", "Series B", "Growth", "Unknown")
-- "investmentDate": string (YYYY-MM-DD if shown on page, otherwise omit)
+- "investmentDate": string (YYYY-MM-DD if known, otherwise omit)
 
-If the page lists companies but none are crypto/Web3 related, return an empty array [].
-If the page doesn't appear to be a portfolio page, still try to extract any mentioned companies.
+If the content lists companies but none are crypto/Web3 related, return an empty array [].
 RETURN ONLY RAW JSON ARRAY.`;
 
   try {
-    return await executeWithRetry('lookupInvestorPortfolioFromUrl', async () => {
+    return await executeWithRetry('extractPortfolioFromText', async () => {
       const text = await callClaude(prompt, SYSTEM_PROMPT, 0.3);
       const json = parseJSON(text);
       if (!Array.isArray(json)) {
-        console.warn('lookupInvestorPortfolioFromUrl: non-array response for', url);
+        console.warn('extractPortfolioFromText: non-array response');
         return [];
       }
       return json.filter((c: any) =>
@@ -680,7 +691,7 @@ RETURN ONLY RAW JSON ARRAY.`;
       );
     });
   } catch (error) {
-    console.error('lookupInvestorPortfolioFromUrl failed for', url, ':', error);
+    console.error('extractPortfolioFromText failed:', error);
     return [];
   }
 };

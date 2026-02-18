@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Search, TrendingUp, ChevronDown, ChevronUp, Building2, DollarSign, Users, Plus, Loader2, Telescope, Check, X, UserPlus, Link } from 'lucide-react';
 import { Company } from '../types';
-import { lookupInvestorPortfolio, lookupInvestorPortfolioFromUrl, DiscoveredPortfolioCompany } from '../services/claudeService';
+import { lookupInvestorPortfolio, lookupInvestorPortfolioFromUrl, extractPortfolioFromText, DiscoveredPortfolioCompany } from '../services/claudeService';
 
 interface InvestorsProps {
   companies: Company[];
@@ -25,6 +25,8 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
   const [isLookingUp, setIsLookingUp] = useState(false);
   const [lookupResults, setLookupResults] = useState<DiscoveredPortfolioCompany[] | null>(null);
   const [lookupInvestorLabel, setLookupInvestorLabel] = useState('');
+  const [showPasteBox, setShowPasteBox] = useState(false);
+  const [pastedContent, setPastedContent] = useState('');
 
   // Discover portfolio state (per existing investor)
   const [discoveringFor, setDiscoveringFor] = useState<string | null>(null);
@@ -123,6 +125,7 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
     if (!name && !url) return;
 
     setIsLookingUp(true);
+    setShowPasteBox(false);
     // If only a URL is given (no name), derive a label from the domain
     const label = name || new URL(normalizeUrl(url)).hostname.replace('www.', '');
     setLookupInvestorLabel(label);
@@ -137,13 +140,47 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
       const effectiveName = nameIsUrl ? '' : name;
 
       if (effectiveUrl) {
-        results = await lookupInvestorPortfolioFromUrl(effectiveUrl, effectiveName, existingCompanyNames);
+        const { results: urlResults, fetchFailed } = await lookupInvestorPortfolioFromUrl(effectiveUrl, effectiveName, existingCompanyNames);
+        if (fetchFailed) {
+          // Site blocked our request or is a JS SPA — offer paste fallback
+          setShowPasteBox(true);
+          setLookupResults([]);
+          setIsLookingUp(false);
+          return;
+        }
+        results = urlResults;
       } else {
         results = await lookupInvestorPortfolio(effectiveName, existingCompanyNames);
+        if (results.length === 0) {
+          // No knowledge of this fund — offer paste fallback
+          setShowPasteBox(true);
+        }
       }
       setLookupResults(results);
     } catch (e) {
       console.error('Investor lookup failed:', e);
+      setLookupResults([]);
+      setShowPasteBox(true);
+    } finally {
+      setIsLookingUp(false);
+    }
+  };
+
+  // Process pasted portfolio content
+  const handlePastedContentSubmit = async () => {
+    const text = pastedContent.trim();
+    if (!text) return;
+    setIsLookingUp(true);
+    try {
+      const results = await extractPortfolioFromText(
+        text,
+        newInvestorName.trim() || undefined,
+        existingCompanyNames
+      );
+      setLookupResults(results);
+      setShowPasteBox(false);
+    } catch (e) {
+      console.error('Paste extraction failed:', e);
       setLookupResults([]);
     } finally {
       setIsLookingUp(false);
@@ -169,6 +206,8 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
     setLookupInvestorLabel('');
     setNewInvestorName('');
     setNewInvestorUrl('');
+    setShowPasteBox(false);
+    setPastedContent('');
   };
 
   // Reusable discovered company card
@@ -274,26 +313,53 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
           </p>
         </div>
 
+        {/* Paste fallback — shown when URL fetch fails or name lookup returns nothing */}
+        {showPasteBox && (
+          <div className="mt-4 bg-orange-50 border border-orange-300 rounded-xl p-4">
+            <p className="text-sm font-bold text-orange-900 mb-1">
+              Could not automatically fetch portfolio data{lookupInvestorLabel ? ` for "${lookupInvestorLabel}"` : ''}
+            </p>
+            <p className="text-xs text-orange-700 mb-3">
+              The site may block automated access or use JavaScript rendering. Copy-paste the portfolio page content from your browser below.
+            </p>
+            <textarea
+              value={pastedContent}
+              onChange={e => setPastedContent(e.target.value)}
+              placeholder={"Open the investor's portfolio page in your browser, select all (Ctrl+A), copy (Ctrl+C), and paste here.\n\nFor example, go to https://www.50partners.fr/ → portfolio section → select all text → paste here."}
+              className="w-full h-36 px-3 py-2 text-xs border border-orange-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white placeholder-orange-300 resize-y font-mono"
+            />
+            <div className="flex items-center justify-between mt-2">
+              <p className="text-[10px] text-orange-500">
+                {pastedContent.length > 0 ? `${pastedContent.length} characters pasted` : 'Waiting for content...'}
+              </p>
+              <button
+                onClick={handlePastedContentSubmit}
+                disabled={isLookingUp || pastedContent.trim().length < 20}
+                className="flex items-center gap-2 px-3 py-1.5 bg-orange-600 text-white rounded-lg text-xs font-bold hover:bg-orange-700 transition-colors disabled:opacity-50"
+              >
+                {isLookingUp ? <Loader2 size={12} className="animate-spin" /> : <Telescope size={12} />}
+                {isLookingUp ? 'Analyzing...' : 'Extract Portfolio Companies'}
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Lookup results */}
-        {lookupResults !== null && (
+        {lookupResults !== null && lookupResults.length > 0 && (
           <div className="mt-4 bg-white border border-amber-200 rounded-xl p-4">
             <div className="flex items-center justify-between mb-3">
               <p className="text-sm font-bold text-slate-900">
-                {lookupResults.length > 0
-                  ? `Found ${lookupResults.length} portfolio ${lookupResults.length === 1 ? 'company' : 'companies'} for ${lookupInvestorLabel}`
-                  : `No stablecoin/digital-asset investments found for "${lookupInvestorLabel}"`}
+                Found {lookupResults.length} portfolio {lookupResults.length === 1 ? 'company' : 'companies'} for {lookupInvestorLabel}
               </p>
               <button onClick={dismissLookupResults} className="text-slate-400 hover:text-slate-600">
                 <X size={16} />
               </button>
             </div>
-            {lookupResults.length > 0 && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {lookupResults.map(company => (
-                  <DiscoveredCompanyCard key={company.name} company={company} />
-                ))}
-              </div>
-            )}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {lookupResults.map(company => (
+                <DiscoveredCompanyCard key={company.name} company={company} />
+              ))}
+            </div>
           </div>
         )}
       </div>
