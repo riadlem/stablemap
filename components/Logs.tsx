@@ -98,14 +98,18 @@ const Logs: React.FC<LogsProps> = ({ onBack, companies, onRefreshFromFirestore }
       if (!raw) { setSyncStatus('error'); setSyncMessage('No data found in localStorage.'); return; }
       const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed) || parsed.length === 0) { setSyncStatus('error'); setSyncMessage('localStorage is empty.'); return; }
-      await db.saveCompanies(parsed);
-      setSyncStatus('done');
-      setSyncMessage(`${parsed.length} companies pushed to Firestore.`);
-      // Refresh the Firestore count after a successful push
+      const savedCount = await db.forceWriteToFirestore(parsed);
+      if (savedCount < parsed.length) {
+        setSyncStatus('done');
+        setSyncMessage(`Partial: ${savedCount}/${parsed.length} companies written to Firestore.`);
+      } else {
+        setSyncStatus('done');
+        setSyncMessage(`${savedCount} companies written to Firestore.`);
+      }
       fetchFirestoreCount();
     } catch (e: any) {
       setSyncStatus('error');
-      setSyncMessage(e?.message || 'Sync failed.');
+      setSyncMessage(e?.message || 'Push failed — check Firebase config.');
     }
   };
 
