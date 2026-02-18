@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
-import { Search, TrendingUp, ChevronDown, ChevronUp, Building2, DollarSign, Users, Plus, Loader2, Telescope, Check, X, UserPlus } from 'lucide-react';
+import { Search, TrendingUp, ChevronDown, ChevronUp, Building2, DollarSign, Users, Plus, Loader2, Telescope, Check, X, UserPlus, Link } from 'lucide-react';
 import { Company } from '../types';
-import { lookupInvestorPortfolio, DiscoveredPortfolioCompany } from '../services/claudeService';
+import { lookupInvestorPortfolio, lookupInvestorPortfolioFromUrl, DiscoveredPortfolioCompany } from '../services/claudeService';
 
 interface InvestorsProps {
   companies: Company[];
@@ -21,6 +21,7 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
 
   // Add investor lookup state
   const [newInvestorName, setNewInvestorName] = useState('');
+  const [newInvestorUrl, setNewInvestorUrl] = useState('');
   const [isLookingUp, setIsLookingUp] = useState(false);
   const [lookupResults, setLookupResults] = useState<DiscoveredPortfolioCompany[] | null>(null);
   const [lookupInvestorLabel, setLookupInvestorLabel] = useState('');
@@ -106,15 +107,40 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
     }
   };
 
-  // Lookup a new investor name
+  // Detect if a string looks like a URL
+  const isUrl = (s: string) => /^https?:\/\//i.test(s.trim()) || /^[a-z0-9-]+\.[a-z]{2,}/i.test(s.trim());
+
+  // Normalize a URL-ish string to a full URL
+  const normalizeUrl = (s: string) => {
+    const trimmed = s.trim();
+    return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  };
+
+  // Smart lookup: auto-detects if name field contains a URL, also uses URL field
   const handleNewInvestorLookup = async () => {
     const name = newInvestorName.trim();
-    if (!name) return;
+    const url = newInvestorUrl.trim();
+    if (!name && !url) return;
+
     setIsLookingUp(true);
-    setLookupInvestorLabel(name);
+    // If only a URL is given (no name), derive a label from the domain
+    const label = name || new URL(normalizeUrl(url)).hostname.replace('www.', '');
+    setLookupInvestorLabel(label);
     setLookupResults(null);
+
     try {
-      const results = await lookupInvestorPortfolio(name, existingCompanyNames);
+      let results: DiscoveredPortfolioCompany[];
+
+      // Determine the effective URL — could be from the URL field or auto-detected in the name field
+      const nameIsUrl = name && isUrl(name);
+      const effectiveUrl = url || (nameIsUrl ? normalizeUrl(name) : '');
+      const effectiveName = nameIsUrl ? '' : name;
+
+      if (effectiveUrl) {
+        results = await lookupInvestorPortfolioFromUrl(effectiveUrl, effectiveName, existingCompanyNames);
+      } else {
+        results = await lookupInvestorPortfolio(effectiveName, existingCompanyNames);
+      }
       setLookupResults(results);
     } catch (e) {
       console.error('Investor lookup failed:', e);
@@ -142,6 +168,7 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
     setLookupResults(null);
     setLookupInvestorLabel('');
     setNewInvestorName('');
+    setNewInvestorUrl('');
   };
 
   // Reusable discovered company card
@@ -210,25 +237,41 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
           <UserPlus size={16} className="text-amber-600" /> Look Up an Investor
         </h3>
         <p className="text-xs text-amber-700 mb-3">
-          Enter a VC or investment firm name to discover their stablecoin & digital asset portfolio companies
+          Enter a fund name, or paste their portfolio page URL for smaller / regional VCs
         </p>
-        <div className="flex gap-2">
-          <input
-            type="text"
-            placeholder="e.g. Andreessen Horowitz, Paradigm, Sequoia..."
-            value={newInvestorName}
-            onChange={e => setNewInvestorName(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleNewInvestorLookup()}
-            className="flex-1 px-3 py-2 text-sm border border-amber-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white placeholder-amber-400"
-          />
-          <button
-            onClick={handleNewInvestorLookup}
-            disabled={isLookingUp || !newInvestorName.trim()}
-            className="flex items-center gap-2 px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-bold hover:bg-amber-700 transition-colors disabled:opacity-50"
-          >
-            {isLookingUp ? <Loader2 size={14} className="animate-spin" /> : <Telescope size={14} />}
-            {isLookingUp ? 'Searching...' : 'Discover Portfolio'}
-          </button>
+        <div className="flex flex-col gap-2">
+          <div className="flex gap-2">
+            <input
+              type="text"
+              placeholder="Fund name (e.g. Paradigm, 50 Partners, Arche Capital...)"
+              value={newInvestorName}
+              onChange={e => setNewInvestorName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleNewInvestorLookup()}
+              className="flex-1 px-3 py-2 text-sm border border-amber-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white placeholder-amber-400"
+            />
+            <button
+              onClick={handleNewInvestorLookup}
+              disabled={isLookingUp || (!newInvestorName.trim() && !newInvestorUrl.trim())}
+              className="flex items-center gap-2 px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-bold hover:bg-amber-700 transition-colors disabled:opacity-50 shrink-0"
+            >
+              {isLookingUp ? <Loader2 size={14} className="animate-spin" /> : <Telescope size={14} />}
+              {isLookingUp ? 'Searching...' : 'Discover Portfolio'}
+            </button>
+          </div>
+          <div className="flex items-center gap-2">
+            <Link size={14} className="text-amber-400 shrink-0" />
+            <input
+              type="text"
+              placeholder="Portfolio page URL (optional) — e.g. https://50partners.com/portfolio"
+              value={newInvestorUrl}
+              onChange={e => setNewInvestorUrl(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleNewInvestorLookup()}
+              className="flex-1 px-3 py-1.5 text-xs border border-amber-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white/70 placeholder-amber-300"
+            />
+          </div>
+          <p className="text-[10px] text-amber-500">
+            Tip: For lesser-known funds, pasting the portfolio/investments page URL gives much better results
+          </p>
         </div>
 
         {/* Lookup results */}

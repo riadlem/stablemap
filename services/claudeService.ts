@@ -622,6 +622,69 @@ RETURN ONLY RAW JSON ARRAY.`;
   }
 };
 
+export const lookupInvestorPortfolioFromUrl = async (
+  url: string,
+  investorName: string,
+  existingCompanyNames: string[]
+): Promise<DiscoveredPortfolioCompany[]> => {
+  const pageContent = await fetchUrlContent(url);
+
+  if (!pageContent || pageContent.content.length < 50) {
+    logger.warn('api', `Could not fetch content from ${url}, falling back to name lookup`);
+    return lookupInvestorPortfolio(investorName || 'unknown fund', existingCompanyNames);
+  }
+
+  const truncated = pageContent.content.length > 12000
+    ? pageContent.content.substring(0, 12000) + '\n[truncated]'
+    : pageContent.content;
+
+  const excludeList = existingCompanyNames.length > 0
+    ? `\n\nEXCLUDE these companies already in our directory: ${existingCompanyNames.join(', ')}`
+    : '';
+
+  const prompt = `You are analyzing the portfolio/investments page of a venture capital or investment firm${investorName ? ` ("${investorName}")` : ''}.
+
+Here is the page content fetched from ${url}:
+
+---
+Page title: ${pageContent.title}
+
+${truncated}
+---
+
+Extract ALL portfolio companies from this page that operate in or are relevant to the crypto, Web3, blockchain, digital assets, stablecoins, DeFi, or fintech space.
+
+For EACH company found on the page, determine if it's relevant to our scope (crypto/Web3/digital assets/blockchain/fintech). Include companies even if their crypto relevance isn't obvious from the page alone — we want to cast a wide net and let the user decide.${excludeList}
+
+Return a JSON array of objects with:
+- "name": string (company name exactly as shown on the page)
+- "description": string (1 sentence — what the company does, based on page context or your knowledge)
+- "category": string (one of: "Issuer", "Infrastructure", "Wallet", "Payments", "DeFi", "Custody", "Banks", "Exchange", "Analytics", "Web3", "Fintech", "Other")
+- "fundingStage": string (e.g. "Seed", "Pre-Seed", "Series A", "Series B", "Growth", "Unknown")
+- "investmentDate": string (YYYY-MM-DD if shown on page, otherwise omit)
+
+If the page lists companies but none are crypto/Web3 related, return an empty array [].
+If the page doesn't appear to be a portfolio page, still try to extract any mentioned companies.
+RETURN ONLY RAW JSON ARRAY.`;
+
+  try {
+    return await executeWithRetry('lookupInvestorPortfolioFromUrl', async () => {
+      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.3);
+      const json = parseJSON(text);
+      if (!Array.isArray(json)) {
+        console.warn('lookupInvestorPortfolioFromUrl: non-array response for', url);
+        return [];
+      }
+      return json.filter((c: any) =>
+        c && typeof c.name === 'string' && typeof c.description === 'string'
+      );
+    });
+  } catch (error) {
+    console.error('lookupInvestorPortfolioFromUrl failed for', url, ':', error);
+    return [];
+  }
+};
+
 export const analyzeNewsForCompanies = async (
   content: string,
   companyNames: string[]
