@@ -127,6 +127,27 @@ const goOffline = () => {
 
 export const db = {
   /**
+   * Get the raw Firestore document count for companies (no merge, no localStorage).
+   * Returns null if offline or Firestore unavailable.
+   */
+  async getFirestoreCompanyCount(): Promise<{ count: number; companies: Company[] } | null> {
+    if (checkOffline()) return null;
+    try {
+      const companyCollection = collection(dbInstance, COLLECTIONS.COMPANIES);
+      const snapshot = await withTimeout<QuerySnapshot<DocumentData>>(getDocs(companyCollection), 15000);
+      const companies = snapshot.docs.map(d => {
+        const raw = d.data();
+        const normalized = normalizeDates(raw);
+        return { ...normalized, id: d.id } as Company;
+      });
+      return { count: companies.length, companies };
+    } catch (e: any) {
+      console.warn("[DB] Error fetching Firestore company count:", e.message);
+      return null;
+    }
+  },
+
+  /**
    * Fetch companies from Firestore or LocalStorage
    */
   async getCompanies(): Promise<Company[]> {
