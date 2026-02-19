@@ -450,20 +450,24 @@ RETURN ONLY RAW JSON ARRAY.`;
 };
 
 export const scanCompanyNews = async (
-  companyName: string
+  companyName: string,
+  voteFeedback?: { liked: string[]; disliked: string[] }
 ): Promise<NewsItem[]> => {
-  logger.info('news', `scanCompanyNews called for "${companyName}"`);
+  logger.info('news', `scanCompanyNews called for "${companyName}" (feedback: ${voteFeedback ? `${voteFeedback.liked.length} liked, ${voteFeedback.disliked.length} disliked` : 'none'})`);
 
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
   const fromDate = thirtyDaysAgo.toISOString().split('T')[0];
 
-  const searchQuery = `"${companyName}" AND (stablecoin OR "digital asset" OR blockchain OR crypto OR partnership)`;
+  // Focused search query: stablecoin, tokenized deposits/funds, crypto treasury
+  const searchQuery = `"${companyName}" AND (stablecoin OR "tokenized deposits" OR "tokenized funds" OR "tokenized assets" OR "crypto treasury" OR "digital asset" OR CBDC)`;
   const apiArticles = await fetchNewsFromAPI(searchQuery, fromDate);
+
+  let candidates: NewsItem[] = [];
 
   if (apiArticles.length > 0) {
     logger.info('news', `Got ${apiArticles.length} articles from NewsAPI for ${companyName}`);
-    return apiArticles
+    candidates = apiArticles
       .filter((a) => a.title && a.summary)
       .map((article, idx) => ({
         id: `company-scan-${Date.now()}-${idx}`,
@@ -475,45 +479,114 @@ export const scanCompanyNews = async (
         relatedCompanies: [companyName],
         sourceType: 'press' as const,
       }));
-  }
+  } else {
+    // Fallback to Claude's knowledge
+    logger.warn('news', `NewsAPI returned 0 articles for ${companyName}, falling back to Claude`);
 
-  logger.warn('news', `NewsAPI returned 0 articles for ${companyName}, falling back to Claude`);
-  const prompt = `Based on your knowledge, provide recent notable news, developments, and milestones specifically about "${companyName}" in the stablecoin, digital asset, and enterprise blockchain space.
+    let feedbackBlock = '';
+    if (voteFeedback && (voteFeedback.liked.length > 0 || voteFeedback.disliked.length > 0)) {
+      feedbackBlock = '\n\nUSER FEEDBACK — use this to calibrate relevance:\n';
+      if (voteFeedback.liked.length > 0) {
+        feedbackBlock += `GOOD examples (user liked these):\n${voteFeedback.liked.slice(0, 8).map(t => `  - "${t}"`).join('\n')}\n`;
+      }
+      if (voteFeedback.disliked.length > 0) {
+        feedbackBlock += `BAD examples (user rejected these — avoid similar topics):\n${voteFeedback.disliked.slice(0, 8).map(t => `  - "${t}"`).join('\n')}\n`;
+      }
+    }
 
+    const fallbackPrompt = `Based on your knowledge, provide recent notable news specifically ABOUT "${companyName}" and their direct involvement in: stablecoins, tokenized deposits, tokenized funds, tokenized assets, crypto treasury management, or CBDC initiatives.
+
+IMPORTANT FILTERS:
+- The article must be PRIMARILY about "${companyName}" — not just a passing mention
+- Topics MUST relate to: stablecoins, tokenized deposits, tokenized funds, tokenized assets, crypto treasury, or CBDC
+- EXCLUDE articles about general crypto token price recommendations, token picks, or speculative trading advice
+- EXCLUDE articles where "${companyName}" is only briefly mentioned as context for another story
+${feedbackBlock}
 Return a JSON array where each item has:
 - "title": string (headline)
-- "source": string (publication name where this was reported)
-- "date": string (YYYY-MM-DD — use the actual date based on your knowledge)
+- "source": string (publication name)
+- "date": string (YYYY-MM-DD)
 - "summary": string (2-3 sentences)
 
-Include 4-8 items covering: partnerships, product launches, regulatory developments, funding rounds, and strategic moves. Only include events you are confident actually happened — do NOT fabricate news.
+Include 4-8 items. Only include events you are confident actually happened.
+RETURN ONLY RAW JSON ARRAY.`;
+
+    try {
+      candidates = await executeWithRetry('scanCompanyNews', async () => {
+        const text = await callClaude(fallbackPrompt, SYSTEM_PROMPT, 0.3);
+        const json = parseJSON(text);
+        if (!Array.isArray(json)) return [];
+        return json
+          .filter((item: any) => item && typeof item.title === 'string' && typeof item.summary === 'string')
+          .map((item: any, idx: number) => ({
+            id: `company-scan-${Date.now()}-${idx}`,
+            title: item.title,
+            source: typeof item.source === 'string' ? item.source : 'Intelligence',
+            date: typeof item.date === 'string' ? item.date : new Date().toISOString().split('T')[0],
+            summary: item.summary,
+            url: '#',
+            relatedCompanies: [companyName],
+            sourceType: 'press_release' as const,
+          }));
+      });
+    } catch (error: any) {
+      logger.error('news', `scanCompanyNews fallback failed for ${companyName}`, error?.message || String(error));
+      return [];
+    }
+  }
+
+  // --- RELEVANCE FILTER: ask Claude to grade each candidate ---
+  if (candidates.length === 0) return [];
+
+  let feedbackContext = '';
+  if (voteFeedback && (voteFeedback.liked.length > 0 || voteFeedback.disliked.length > 0)) {
+    feedbackContext = '\n\nUSER FEEDBACK — past votes on similar articles:\n';
+    if (voteFeedback.liked.length > 0) {
+      feedbackContext += `LIKED: ${voteFeedback.liked.slice(0, 6).map(t => `"${t}"`).join(', ')}\n`;
+    }
+    if (voteFeedback.disliked.length > 0) {
+      feedbackContext += `DISLIKED: ${voteFeedback.disliked.slice(0, 6).map(t => `"${t}"`).join(', ')}\n`;
+    }
+  }
+
+  const articlesForReview = candidates.map((c, i) => ({
+    index: i,
+    title: c.title,
+    summary: c.summary,
+  }));
+
+  const filterPrompt = `Review these articles and determine which are truly relevant for tracking "${companyName}" in stablecoins, tokenized deposits, tokenized funds, and crypto treasury.
+
+ARTICLES:
+${JSON.stringify(articlesForReview, null, 2)}
+
+RULES:
+1. KEEP only articles where "${companyName}" is a PRIMARY subject (not a passing mention)
+2. KEEP articles about: stablecoins, tokenized deposits, tokenized funds, tokenized assets, crypto treasury management, CBDC
+3. REJECT articles that are mainly about crypto token recommendations, speculative trading tips, or generic market commentary
+4. REJECT articles where "${companyName}" is mentioned as side context for a different company's story
+${feedbackContext}
+Return a JSON array of index numbers for articles that PASS the filter.
+Example: [0, 2, 5]
 RETURN ONLY RAW JSON ARRAY.`;
 
   try {
-    return await executeWithRetry('scanCompanyNews', async () => {
-      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.3);
-      const json = parseJSON(text);
-      if (!Array.isArray(json)) {
-        console.warn('scanCompanyNews: Claude returned non-array response');
-        return [];
-      }
-      return json
-        .filter((item: any) => item && typeof item.title === 'string' && typeof item.summary === 'string')
-        .map((item: any, idx: number) => ({
-          id: `company-scan-${Date.now()}-${idx}`,
-          title: item.title,
-          source: typeof item.source === 'string' ? item.source : 'Intelligence',
-          date: typeof item.date === 'string' ? item.date : new Date().toISOString().split('T')[0],
-          summary: item.summary,
-          url: '#',
-          relatedCompanies: [companyName],
-          sourceType: 'press_release' as const,
-        }));
+    const filterResult = await executeWithRetry('scanCompanyNews-filter', async () => {
+      const text = await callClaude(filterPrompt, SYSTEM_PROMPT, 0.2);
+      return parseJSON(text);
     });
+
+    if (Array.isArray(filterResult)) {
+      const kept = new Set(filterResult.filter((i: any) => typeof i === 'number'));
+      const filtered = candidates.filter((_, i) => kept.has(i));
+      logger.info('news', `Relevance filter: ${filtered.length}/${candidates.length} articles kept for ${companyName}`);
+      return filtered;
+    }
   } catch (error: any) {
-    logger.error('news', `scanCompanyNews failed for ${companyName}`, error?.message || String(error));
-    return [];
+    logger.warn('news', `Relevance filter failed for ${companyName}, returning all candidates`, error?.message || String(error));
   }
+
+  return candidates;
 };
 
 export const scanForNewPartnerships = async (

@@ -1,5 +1,5 @@
 
-import { Company, NewsItem, CompanyFocus, Global500ResearchData, CompanyList as CompanyListType } from '../types';
+import { Company, NewsItem, NewsVote, CompanyFocus, Global500ResearchData, CompanyList as CompanyListType } from '../types';
 import { MOCK_COMPANIES, MOCK_NEWS } from '../constants';
 import { dbInstance, isConfigured } from './firebase';
 import { 
@@ -28,7 +28,8 @@ const LS_KEYS = {
   NEWS: 'stablemap_news',
   SCAN: 'stablemap_lastscan',
   GLOBAL500: 'stablemap_global500',
-  LISTS: 'stablemap_lists'
+  LISTS: 'stablemap_lists',
+  NEWS_VOTES: 'stablemap_news_votes'
 };
 
 // --- HELPERS ---
@@ -649,5 +650,44 @@ export const db = {
         }
       }
     } catch (e) { console.error("[DB] LS error deleteList", e); }
+  },
+
+  /**
+   * Get all news votes: { [newsId]: 'up' | 'down' }
+   */
+  getNewsVotes(): Record<string, NewsVote> {
+    try {
+      const stored = localStorage.getItem(LS_KEYS.NEWS_VOTES);
+      return stored ? JSON.parse(stored) : {};
+    } catch { return {}; }
+  },
+
+  /**
+   * Set vote for a single news item (or remove if vote is undefined)
+   */
+  setNewsVote(newsId: string, vote: NewsVote | undefined): void {
+    const votes = this.getNewsVotes();
+    if (vote) {
+      votes[newsId] = vote;
+    } else {
+      delete votes[newsId];
+    }
+    localStorage.setItem(LS_KEYS.NEWS_VOTES, JSON.stringify(votes));
+  },
+
+  /**
+   * Get voted news summaries for AI context (titles + vote direction)
+   */
+  getVoteSummaryForAI(companyName: string, allNews: NewsItem[]): { liked: string[]; disliked: string[] } {
+    const votes = this.getNewsVotes();
+    const liked: string[] = [];
+    const disliked: string[] = [];
+    for (const item of allNews) {
+      if (!item.relatedCompanies.some(rc => rc.toLowerCase() === companyName.toLowerCase())) continue;
+      const v = votes[item.id];
+      if (v === 'up') liked.push(item.title);
+      if (v === 'down') disliked.push(item.title);
+    }
+    return { liked, disliked };
   }
 };

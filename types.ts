@@ -49,6 +49,8 @@ export interface Job {
 
 export type NewsSourceType = 'press' | 'press_release' | 'partnership';
 
+export type NewsVote = 'up' | 'down';
+
 export interface NewsItem {
   id: string;
   title: string;
@@ -58,6 +60,7 @@ export interface NewsItem {
   url: string;
   relatedCompanies: string[];
   sourceType?: NewsSourceType;
+  vote?: NewsVote;
 }
 
 export function classifyNewsSourceType(item: NewsItem): NewsSourceType {

@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { Company, Job, Partner, CompanyFocus, NewsItem, classifyNewsSourceType, NewsSourceType } from '../types';
-import { ArrowLeft, Briefcase, Handshake, ExternalLink, Share2, Sparkles, Building, MapPin, Building2, Globe, RefreshCw, Trash2, Edit2, Check, X, Newspaper, Plus, Flag, Ban, DollarSign, TrendingUp, Users, UserPlus, Tag, Search } from 'lucide-react';
+import { Company, Job, Partner, CompanyFocus, NewsItem, NewsVote, classifyNewsSourceType, NewsSourceType } from '../types';
+import { ArrowLeft, Briefcase, Handshake, ExternalLink, Share2, Sparkles, Building, MapPin, Building2, Globe, RefreshCw, Trash2, Edit2, Check, X, Newspaper, Plus, Flag, Ban, DollarSign, TrendingUp, Users, UserPlus, Tag, Search, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { findJobOpenings, scanCompanyNews } from "../services/claudeService";
 import { db } from '../services/db';
 import { isJobRecent } from '../constants';
@@ -57,6 +57,7 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
   const [tempName, setTempName] = useState(company.name);
   const [isAddNewsOpen, setIsAddNewsOpen] = useState(false);
   const [isScanningNews, setIsScanningNews] = useState(false);
+  const [newsVotes, setNewsVotes] = useState<Record<string, NewsVote>>(() => db.getNewsVotes());
 
   // Job Interaction State
   const [flaggingJobId, setFlaggingJobId] = useState<string | null>(null);
@@ -157,7 +158,8 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
   const handleScanNews = async () => {
       setIsScanningNews(true);
       try {
-          const scannedNews = await scanCompanyNews(company.name);
+          const voteFeedback = db.getVoteSummaryForAI(company.name, displayNews);
+          const scannedNews = await scanCompanyNews(company.name, voteFeedback);
           if (scannedNews.length > 0) {
               const existingIds = new Set(displayNews.map(n => n.id));
               const existingTitles = new Set(displayNews.map(n => n.title.toLowerCase()));
@@ -178,6 +180,17 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
           console.error("Failed to scan news", e);
       }
       setIsScanningNews(false);
+  };
+
+  const handleNewsVote = (newsId: string, vote: NewsVote) => {
+      const current = newsVotes[newsId];
+      const newVote = current === vote ? undefined : vote;
+      db.setNewsVote(newsId, newVote);
+      setNewsVotes(prev => {
+          const next = { ...prev };
+          if (newVote) { next[newsId] = newVote; } else { delete next[newsId]; }
+          return next;
+      });
   };
 
   const handleDeleteClick = async () => {
@@ -587,14 +600,32 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
                                 <p className="text-sm text-slate-600 leading-relaxed mb-4">
                                     {item.summary}
                                 </p>
-                                <a 
-                                    href={item.url} 
-                                    target="_blank" 
-                                    rel="noreferrer" 
-                                    className="inline-flex items-center gap-1 text-xs font-bold text-indigo-600 hover:underline"
-                                >
-                                    Read Source <ExternalLink size={12} />
-                                </a>
+                                <div className="flex items-center justify-between">
+                                    <a
+                                        href={item.url}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="inline-flex items-center gap-1 text-xs font-bold text-indigo-600 hover:underline"
+                                    >
+                                        Read Source <ExternalLink size={12} />
+                                    </a>
+                                    <div className="flex items-center gap-1">
+                                        <button
+                                            onClick={() => handleNewsVote(item.id, 'up')}
+                                            className={`p-1.5 rounded-md transition-colors ${newsVotes[item.id] === 'up' ? 'bg-emerald-100 text-emerald-700' : 'text-slate-300 hover:text-emerald-600 hover:bg-emerald-50'}`}
+                                            title="Relevant — show more like this"
+                                        >
+                                            <ThumbsUp size={13} />
+                                        </button>
+                                        <button
+                                            onClick={() => handleNewsVote(item.id, 'down')}
+                                            className={`p-1.5 rounded-md transition-colors ${newsVotes[item.id] === 'down' ? 'bg-red-100 text-red-600' : 'text-slate-300 hover:text-red-500 hover:bg-red-50'}`}
+                                            title="Not relevant — show fewer like this"
+                                        >
+                                            <ThumbsDown size={13} />
+                                        </button>
+                                    </div>
+                                </div>
                            </div>
                        ))}
                    </div>
