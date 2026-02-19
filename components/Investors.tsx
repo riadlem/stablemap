@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { Search, TrendingUp, ChevronDown, ChevronUp, Building2, DollarSign, Users, Plus, Loader2, Telescope, Check, X, UserPlus, Link, ExternalLink, FileSpreadsheet, ArrowRight, Newspaper, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { Company, NewsItem, NewsVote, classifyNewsSourceType, NewsSourceType } from '../types';
-import { lookupInvestorPortfolio, lookupInvestorPortfolioFromUrl, extractPortfolioFromText, scanInvestorNews, DiscoveredPortfolioCompany } from '../services/claudeService';
+import { lookupInvestorPortfolio, lookupInvestorPortfolioFromUrl, extractPortfolioFromText, scanInvestorNews, extractUnknownCompanyNames, DiscoveredPortfolioCompany } from '../services/claudeService';
 import { db } from '../services/db';
 
 interface InvestorsProps {
@@ -149,25 +149,26 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
   const [addingCompanies, setAddingCompanies] = useState<Set<string>>(new Set());
   const [addedCompanies, setAddedCompanies] = useState<Set<string>>(new Set());
 
-  // Investor news feed state
+  // Investor news feed state (per-investor accordion)
   const [investorNews, setInvestorNews] = useState<Map<string, NewsItem[]>>(new Map());
   const [scanningNewsFor, setScanningNewsFor] = useState<string | null>(null);
   const [newsVotes, setNewsVotes] = useState<Record<string, NewsVote>>({});
+
+  // Investment News tab state
+  const [activeInvestorTab, setActiveInvestorTab] = useState<'investors' | 'news'>('investors');
+  const [combinedInvestorNews, setCombinedInvestorNews] = useState<NewsItem[]>([]);
+  const [isLoadingCombinedNews, setIsLoadingCombinedNews] = useState(false);
+  const [scanQueue, setScanQueue] = useState<string[]>([]);
+  const [scanQueueIndex, setScanQueueIndex] = useState(0);
+  const [isScanningAll, setIsScanningAll] = useState(false);
+  const [scannedInvestors, setScannedInvestors] = useState<Set<string>>(new Set());
+  const [unknownCompaniesInArticle, setUnknownCompaniesInArticle] = useState<Map<string, string[]>>(new Map());
+  const [detectingUnknownFor, setDetectingUnknownFor] = useState<Set<string>>(new Set());
 
   // Load votes from Firestore on mount
   useEffect(() => {
     db.getNewsVotes().then(setNewsVotes).catch(() => {});
   }, []);
-
-  // Auto-scan news when investor is expanded for the first time
-  useEffect(() => {
-    if (expandedInvestor && !investorNews.has(expandedInvestor) && scanningNewsFor !== expandedInvestor) {
-      const inv = investors.find(i => i.name === expandedInvestor);
-      if (inv) {
-        handleScanInvestorNews(inv.name, inv.portfolio.map(c => c.name));
-      }
-    }
-  }, [expandedInvestor]);
 
   const existingCompanyNames = useMemo(() => companies.map(c => c.name), [companies]);
 
@@ -221,6 +222,47 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
     [companies]
   );
 
+  const investorNameSet = useMemo(
+    () => new Set(investors.map(i => i.name.toLowerCase())),
+    [investors]
+  );
+
+  // Effect A: load combined news from global db when "Investment News" tab first opens
+  useEffect(() => {
+    if (activeInvestorTab !== 'news' || combinedInvestorNews.length > 0) return;
+    setIsLoadingCombinedNews(true);
+    db.getNews()
+      .then(allNews => {
+        const related = allNews.filter(item =>
+          item.relatedCompanies.some(rc => investorNameSet.has(rc.toLowerCase()))
+        );
+        setCombinedInvestorNews(
+          related.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        );
+      })
+      .catch(() => {})
+      .finally(() => setIsLoadingCombinedNews(false));
+  }, [activeInvestorTab, investorNameSet]);
+
+  // Effect B: drive sequential scan queue one investor at a time
+  useEffect(() => {
+    if (!isScanningAll) return;
+    if (scanQueueIndex >= scanQueue.length) { setIsScanningAll(false); return; }
+    const inv = investors.find(i => i.name === scanQueue[scanQueueIndex]);
+    if (inv) handleScanAndMerge(inv.name, inv.portfolio.map(c => c.name));
+    else setScanQueueIndex(prev => prev + 1);
+  }, [isScanningAll, scanQueueIndex, scanQueue]);
+
+  // Effect C: auto-scan when accordion expanded for the first time
+  useEffect(() => {
+    if (!expandedInvestor) return;
+    if (investorNews.has(expandedInvestor)) return;
+    if (scanningNewsFor === expandedInvestor) return;
+    if (scannedInvestors.has(expandedInvestor)) return;
+    const inv = investors.find(i => i.name === expandedInvestor);
+    if (inv) handleScanAndMerge(inv.name, inv.portfolio.map(c => c.name));
+  }, [expandedInvestor]);
+
   const toggleExpand = (name: string) => {
     setExpandedInvestor(prev => (prev === name ? null : name));
   };
@@ -242,27 +284,104 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
     }
   };
 
-  // Scan investment news for an investor
-  const handleScanInvestorNews = async (investorName: string, portfolioNames: string[]) => {
+  // Core scan function: scans one investor, enriches relatedCompanies,
+  // persists to db (propagates to CompanyDetail), and updates both feeds
+  const handleScanAndMerge = async (investorName: string, portfolioNames: string[]) => {
     setScanningNewsFor(investorName);
     try {
       const existingNews = investorNews.get(investorName) || [];
       const voteFeedback = await db.getVoteSummaryForAI(investorName, existingNews);
-      const scannedNews = await scanInvestorNews(investorName, portfolioNames, voteFeedback);
+      const scannedItems = await scanInvestorNews(investorName, portfolioNames, voteFeedback);
+
+      // Client-side company enrichment: detect directory companies mentioned in each article
+      const allCompanyNames = companies.map(c => c.name);
+      const enriched = scannedItems.map(item => {
+        const text = `${item.title} ${item.summary}`.toLowerCase();
+        const mentioned = allCompanyNames.filter(n => text.includes(n.toLowerCase()));
+        return {
+          ...item,
+          relatedCompanies: Array.from(new Set([investorName, ...mentioned])),
+        };
+      });
+
+      // Deduplicate against existing (by id and title)
+      const existingIds = new Set(existingNews.map(n => n.id));
       const existingTitles = new Set(existingNews.map(n => n.title.toLowerCase()));
-      const newItems = scannedNews.filter(n => !existingTitles.has(n.title.toLowerCase()));
-      const merged = [...existingNews, ...newItems].sort(
+      const newItems = enriched.filter(
+        n => !existingIds.has(n.id) && !existingTitles.has(n.title.toLowerCase())
+      );
+
+      // Update per-investor accordion store
+      const mergedForAccordion = [...existingNews, ...newItems].sort(
         (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
       );
       setInvestorNews(prev => {
         const next = new Map(prev);
-        next.set(investorName, merged);
+        next.set(investorName, mergedForAccordion);
         return next;
       });
+
+      // Persist to global db so CompanyDetail views pick it up automatically
+      if (newItems.length > 0) {
+        db.saveNews(newItems).catch(console.error);
+      }
+
+      // Merge into combined tab feed (dedup by id and title)
+      if (newItems.length > 0) {
+        setCombinedInvestorNews(prev => {
+          const prevIds = new Set(prev.map(n => n.id));
+          const prevTitles = new Set(prev.map(n => n.title.toLowerCase()));
+          const toAdd = newItems.filter(n => !prevIds.has(n.id) && !prevTitles.has(n.title.toLowerCase()));
+          return [...prev, ...toAdd].sort(
+            (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+          );
+        });
+      }
+
+      setScannedInvestors(prev => new Set(prev).add(investorName));
     } catch (e) {
       console.error('Investor news scan failed:', e);
     } finally {
       setScanningNewsFor(null);
+      setScanQueueIndex(prev => prev + 1);
+    }
+  };
+
+  const handleScanAllInvestors = () => {
+    const unscanned = investors.filter(inv => !scannedInvestors.has(inv.name)).map(i => i.name);
+    if (unscanned.length === 0) return;
+    setScanQueue(unscanned);
+    setScanQueueIndex(0);
+    setIsScanningAll(true);
+  };
+
+  const handleDetectUnknownCompanies = async (article: NewsItem) => {
+    if (detectingUnknownFor.has(article.id)) return;
+    setDetectingUnknownFor(prev => new Set(prev).add(article.id));
+    try {
+      const unknown = await extractUnknownCompanyNames(
+        article.title,
+        article.summary,
+        companies.map(c => c.name)
+      );
+      setUnknownCompaniesInArticle(prev => {
+        const next = new Map(prev);
+        next.set(article.id, unknown);
+        return next;
+      });
+    } catch (e) {
+      console.error('Unknown company detection failed', e);
+      setUnknownCompaniesInArticle(prev => {
+        const next = new Map(prev);
+        next.set(article.id, []);
+        return next;
+      });
+    } finally {
+      setDetectingUnknownFor(prev => {
+        const next = new Set(prev);
+        next.delete(article.id);
+        return next;
+      });
     }
   };
 
@@ -451,6 +570,29 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
           </p>
         </div>
       </div>
+
+      {/* Tab Bar */}
+      <div className="flex border-b border-slate-200 -mb-2">
+        <button
+          onClick={() => setActiveInvestorTab('investors')}
+          className={`py-3 px-1 mr-6 text-sm font-semibold border-b-2 transition-colors flex items-center gap-2 ${activeInvestorTab === 'investors' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+        >
+          <TrendingUp size={15} /> Investors
+        </button>
+        <button
+          onClick={() => setActiveInvestorTab('news')}
+          className={`py-3 px-1 text-sm font-semibold border-b-2 transition-colors flex items-center gap-2 ${activeInvestorTab === 'news' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+        >
+          <Newspaper size={15} /> Investment News
+          {combinedInvestorNews.length > 0 && (
+            <span className="ml-0.5 text-[10px] font-bold bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full">
+              {combinedInvestorNews.length}
+            </span>
+          )}
+        </button>
+      </div>
+
+      {activeInvestorTab === 'investors' && (<>
 
       {/* Add Investor Lookup */}
       <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-xl p-5">
@@ -818,7 +960,7 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
                         </p>
                         {investorNews.has(inv.name) && (
                           <button
-                            onClick={(e) => { e.stopPropagation(); handleScanInvestorNews(inv.name, inv.portfolio.map(c => c.name)); }}
+                            onClick={(e) => { e.stopPropagation(); handleScanAndMerge(inv.name, inv.portfolio.map(c => c.name)); }}
                             disabled={scanningNewsFor === inv.name}
                             className="flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-bold border border-indigo-200 text-indigo-700 bg-indigo-50 rounded-md hover:bg-indigo-100 transition-colors disabled:opacity-60"
                           >
@@ -899,6 +1041,183 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
               </div>
             );
           })}
+        </div>
+      )}
+
+      </>)} {/* end investors tab */}
+
+      {/* Investment News Tab */}
+      {activeInvestorTab === 'news' && (
+        <div className="space-y-4 pt-2">
+          {/* Toolbar */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleScanAllInvestors}
+                disabled={isScanningAll || investors.length === 0}
+                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700 transition-colors disabled:opacity-60"
+              >
+                {isScanningAll
+                  ? <><Loader2 size={14} className="animate-spin" /> Scanning {scanQueueIndex + 1} of {scanQueue.length}...</>
+                  : <><Search size={14} /> Scan All Investors</>
+                }
+              </button>
+              {scannedInvestors.size > 0 && !isScanningAll && (
+                <span className="text-xs text-slate-400">{scannedInvestors.size} of {investors.length} scanned</span>
+              )}
+            </div>
+            {combinedInvestorNews.length > 0 && (
+              <span className="text-xs text-slate-500 font-medium">{combinedInvestorNews.length} articles</span>
+            )}
+          </div>
+
+          {/* Progress bar */}
+          {isScanningAll && (
+            <div>
+              <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-indigo-500 rounded-full transition-all duration-500"
+                  style={{ width: `${scanQueue.length > 0 ? (scanQueueIndex / scanQueue.length) * 100 : 0}%` }}
+                />
+              </div>
+              {scanningNewsFor && (
+                <p className="text-[11px] text-slate-400 mt-1">Scanning {scanningNewsFor}...</p>
+              )}
+            </div>
+          )}
+
+          {/* Feed */}
+          {isLoadingCombinedNews ? (
+            <div className="flex items-center gap-2 text-sm text-slate-500 py-8 justify-center">
+              <Loader2 size={16} className="animate-spin" /> Loading investment news...
+            </div>
+          ) : combinedInvestorNews.length === 0 ? (
+            <div className="text-center py-16 border-2 border-dashed border-slate-200 rounded-xl bg-slate-50">
+              <Newspaper size={36} className="mx-auto text-slate-300 mb-2" />
+              <p className="text-slate-500 font-medium text-sm">No investment news yet</p>
+              <p className="text-slate-400 text-xs mt-1">Click "Scan All Investors" to fetch news across all funds</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {combinedInvestorNews.map(item => {
+                const st = classifyNewsSourceType(item);
+                const colors: Record<NewsSourceType, string> = {
+                  press: 'bg-blue-50 text-blue-700 border-blue-100',
+                  press_release: 'bg-amber-50 text-amber-700 border-amber-100',
+                  partnership: 'bg-emerald-50 text-emerald-700 border-emerald-100',
+                };
+                const labels: Record<NewsSourceType, string> = { press: 'Press', press_release: 'Press Release', partnership: 'Partnership' };
+
+                // Known directory companies mentioned (excluding investor names themselves)
+                const knownMentioned = item.relatedCompanies
+                  .filter(rc => !investorNameSet.has(rc.toLowerCase()))
+                  .map(rc => companies.find(c => c.name.toLowerCase() === rc.toLowerCase()))
+                  .filter((c): c is Company => !!c);
+
+                // Investor chips (from relatedCompanies)
+                const investorChips = item.relatedCompanies.filter(rc => investorNameSet.has(rc.toLowerCase()));
+
+                // Unknown company suggestions (detected lazily)
+                const unknownNames = (unknownCompaniesInArticle.get(item.id) || []).filter(
+                  name => !companies.some(c => c.name.toLowerCase() === name.toLowerCase())
+                );
+                const detectionRan = unknownCompaniesInArticle.has(item.id);
+                const isDetecting = detectingUnknownFor.has(item.id);
+
+                return (
+                  <div key={item.id} className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-all">
+                    <div className="flex justify-between items-start mb-2">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wide border ${colors[st]}`}>
+                          {labels[st]}
+                        </span>
+                        {item.source && !['Intelligence', 'Manual Entry'].includes(item.source) && (
+                          <span className="text-[10px] font-bold bg-slate-100 text-slate-500 px-2 py-0.5 rounded uppercase tracking-wide">
+                            {item.source}
+                          </span>
+                        )}
+                        {investorChips.map(rc => (
+                          <span key={rc} className="text-[10px] font-bold bg-violet-50 text-violet-700 border border-violet-100 px-2 py-0.5 rounded uppercase tracking-wide">
+                            {rc}
+                          </span>
+                        ))}
+                      </div>
+                      <span className="text-slate-400 text-xs font-medium shrink-0 ml-2">{item.date}</span>
+                    </div>
+
+                    <h4 className="text-base font-bold text-slate-900 mb-1.5">{item.title}</h4>
+                    <p className="text-sm text-slate-600 leading-relaxed mb-3">{item.summary}</p>
+
+                    {/* Company chips */}
+                    {(knownMentioned.length > 0 || unknownNames.length > 0 || !detectionRan) && (
+                      <div className="flex flex-wrap gap-1.5 mb-3">
+                        {knownMentioned.map(company => (
+                          <button
+                            key={company.id}
+                            onClick={() => onSelectCompany(company)}
+                            className="inline-flex items-center gap-1 text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 px-1.5 py-0.5 rounded-full hover:bg-indigo-100 transition-colors"
+                            title="Open company profile"
+                          >
+                            <Building2 size={9} /> {company.name}
+                          </button>
+                        ))}
+                        {unknownNames.map(name => {
+                          const isAdding = addingCompanies.has(name);
+                          const isAdded = addedCompanies.has(name);
+                          return (
+                            <button
+                              key={name}
+                              onClick={() => !isAdded && !isAdding && handleAddToDirectory(name)}
+                              disabled={isAdding || isAdded}
+                              className="inline-flex items-center gap-1 text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded-full hover:bg-amber-100 transition-colors disabled:opacity-70"
+                              title="Add to directory"
+                            >
+                              {isAdded ? <><Check size={9} /> {name}</> : isAdding ? <><Loader2 size={9} className="animate-spin" /> Adding...</> : <><Plus size={9} /> {name}</>}
+                            </button>
+                          );
+                        })}
+                        {!detectionRan && (
+                          <button
+                            onClick={() => handleDetectUnknownCompanies(item)}
+                            disabled={isDetecting}
+                            className="inline-flex items-center gap-1 text-[10px] font-medium text-slate-400 hover:text-slate-600 transition-colors"
+                            title="Detect unlisted companies mentioned in this article"
+                          >
+                            {isDetecting ? <Loader2 size={9} className="animate-spin" /> : <Search size={9} />}
+                            {isDetecting ? 'Detecting...' : 'Detect companies'}
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between">
+                      {item.url && item.url !== '#' ? (
+                        <a href={item.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs font-bold text-indigo-600 hover:underline">
+                          Read Source <ExternalLink size={11} />
+                        </a>
+                      ) : <span />}
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => handleInvestorNewsVote(item.id, 'up')}
+                          className={`p-1.5 rounded-md transition-colors ${newsVotes[item.id] === 'up' ? 'bg-emerald-100 text-emerald-700' : 'text-slate-300 hover:text-emerald-600 hover:bg-emerald-50'}`}
+                          title="Relevant — show more like this"
+                        >
+                          <ThumbsUp size={13} />
+                        </button>
+                        <button
+                          onClick={() => handleInvestorNewsVote(item.id, 'down')}
+                          className={`p-1.5 rounded-md transition-colors ${newsVotes[item.id] === 'down' ? 'bg-red-100 text-red-600' : 'text-slate-300 hover:text-red-500 hover:bg-red-50'}`}
+                          title="Not relevant — show fewer like this"
+                        >
+                          <ThumbsDown size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
     </div>
