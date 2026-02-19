@@ -729,6 +729,37 @@ RETURN ONLY RAW JSON ARRAY.`;
   return candidates;
 };
 
+export const extractUnknownCompanyNames = async (
+  articleTitle: string,
+  articleSummary: string,
+  knownCompanyNames: string[]
+): Promise<string[]> => {
+  const knownSet = knownCompanyNames.slice(0, 200).join(', ');
+  const prompt = `Given this article, identify company or startup names mentioned that are NOT in the provided list of known companies.
+
+Focus on: crypto companies, blockchain startups, fintech companies, digital asset firms, stablecoin issuers — any company that could be an investment target or portfolio company.
+
+Article title: ${articleTitle}
+Article summary: ${articleSummary}
+
+Known companies (DO NOT include these in your answer): ${knownSet}
+
+Return a JSON array of strings — unknown company names only. If none found, return [].
+RETURN ONLY RAW JSON ARRAY.`;
+
+  try {
+    return await executeWithRetry('extractUnknownCompanyNames', async () => {
+      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.2);
+      const json = parseJSON(text);
+      if (!Array.isArray(json)) return [];
+      return json.filter((n: any) => typeof n === 'string' && n.trim().length > 0);
+    });
+  } catch (error: any) {
+    logger.error('news', 'extractUnknownCompanyNames failed', error?.message || String(error));
+    return [];
+  }
+};
+
 export const scanForNewPartnerships = async (
   companyName: string,
   existingPartnerNames: string[]
