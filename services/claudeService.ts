@@ -449,6 +449,73 @@ RETURN ONLY RAW JSON ARRAY.`;
   }
 };
 
+export const scanCompanyNews = async (
+  companyName: string
+): Promise<NewsItem[]> => {
+  logger.info('news', `scanCompanyNews called for "${companyName}"`);
+
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  const fromDate = thirtyDaysAgo.toISOString().split('T')[0];
+
+  const searchQuery = `"${companyName}" AND (stablecoin OR "digital asset" OR blockchain OR crypto OR partnership)`;
+  const apiArticles = await fetchNewsFromAPI(searchQuery, fromDate);
+
+  if (apiArticles.length > 0) {
+    logger.info('news', `Got ${apiArticles.length} articles from NewsAPI for ${companyName}`);
+    return apiArticles
+      .filter((a) => a.title && a.summary)
+      .map((article, idx) => ({
+        id: `company-scan-${Date.now()}-${idx}`,
+        title: article.title,
+        source: article.source || 'News',
+        date: article.date || new Date().toISOString().split('T')[0],
+        summary: article.summary,
+        url: article.url || '#',
+        relatedCompanies: [companyName],
+        sourceType: 'press' as const,
+      }));
+  }
+
+  logger.warn('news', `NewsAPI returned 0 articles for ${companyName}, falling back to Claude`);
+  const prompt = `Based on your knowledge, provide recent notable news, developments, and milestones specifically about "${companyName}" in the stablecoin, digital asset, and enterprise blockchain space.
+
+Return a JSON array where each item has:
+- "title": string (headline)
+- "source": string (publication name where this was reported)
+- "date": string (YYYY-MM-DD — use the actual date based on your knowledge)
+- "summary": string (2-3 sentences)
+
+Include 4-8 items covering: partnerships, product launches, regulatory developments, funding rounds, and strategic moves. Only include events you are confident actually happened — do NOT fabricate news.
+RETURN ONLY RAW JSON ARRAY.`;
+
+  try {
+    return await executeWithRetry('scanCompanyNews', async () => {
+      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.3);
+      const json = parseJSON(text);
+      if (!Array.isArray(json)) {
+        console.warn('scanCompanyNews: Claude returned non-array response');
+        return [];
+      }
+      return json
+        .filter((item: any) => item && typeof item.title === 'string' && typeof item.summary === 'string')
+        .map((item: any, idx: number) => ({
+          id: `company-scan-${Date.now()}-${idx}`,
+          title: item.title,
+          source: typeof item.source === 'string' ? item.source : 'Intelligence',
+          date: typeof item.date === 'string' ? item.date : new Date().toISOString().split('T')[0],
+          summary: item.summary,
+          url: '#',
+          relatedCompanies: [companyName],
+          sourceType: 'press_release' as const,
+        }));
+    });
+  } catch (error: any) {
+    logger.error('news', `scanCompanyNews failed for ${companyName}`, error?.message || String(error));
+    return [];
+  }
+};
+
 export const scanForNewPartnerships = async (
   companyName: string,
   existingPartnerNames: string[]

@@ -1,8 +1,8 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { Company, Job, Partner, CompanyFocus, NewsItem, classifyNewsSourceType, NewsSourceType } from '../types';
-import { ArrowLeft, Briefcase, Handshake, ExternalLink, Share2, Sparkles, Building, MapPin, Building2, Globe, RefreshCw, Trash2, Edit2, Check, X, Newspaper, Plus, Flag, Ban, DollarSign, TrendingUp, Users, UserPlus, Tag } from 'lucide-react';
-import { findJobOpenings } from "../services/claudeService";
+import { ArrowLeft, Briefcase, Handshake, ExternalLink, Share2, Sparkles, Building, MapPin, Building2, Globe, RefreshCw, Trash2, Edit2, Check, X, Newspaper, Plus, Flag, Ban, DollarSign, TrendingUp, Users, UserPlus, Tag, Search } from 'lucide-react';
+import { findJobOpenings, scanCompanyNews } from "../services/claudeService";
 import { db } from '../services/db';
 import { isJobRecent } from '../constants';
 import AddNewsModal from './AddNewsModal';
@@ -56,7 +56,8 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
   const [isEditingName, setIsEditingName] = useState(false);
   const [tempName, setTempName] = useState(company.name);
   const [isAddNewsOpen, setIsAddNewsOpen] = useState(false);
-  
+  const [isScanningNews, setIsScanningNews] = useState(false);
+
   // Job Interaction State
   const [flaggingJobId, setFlaggingJobId] = useState<string | null>(null);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
@@ -151,6 +152,32 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
           console.error("Failed to refresh company data", e);
       }
       setIsRefreshing(false);
+  };
+
+  const handleScanNews = async () => {
+      setIsScanningNews(true);
+      try {
+          const scannedNews = await scanCompanyNews(company.name);
+          if (scannedNews.length > 0) {
+              const existingIds = new Set(displayNews.map(n => n.id));
+              const existingTitles = new Set(displayNews.map(n => n.title.toLowerCase()));
+              const newItems = scannedNews.filter(n => !existingIds.has(n.id) && !existingTitles.has(n.title.toLowerCase()));
+              if (newItems.length > 0) {
+                  const merged = [...newItems, ...displayNews].sort(
+                      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+                  );
+                  setDisplayNews(merged);
+                  const updatedCompany = {
+                      ...company,
+                      recentNews: [...(company.recentNews || []), ...newItems],
+                  };
+                  await onUpdateCompany(updatedCompany);
+              }
+          }
+      } catch (e) {
+          console.error("Failed to scan news", e);
+      }
+      setIsScanningNews(false);
   };
 
   const handleDeleteClick = async () => {
@@ -502,12 +529,22 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
             <div>
                <div className="flex justify-between items-center mb-6">
                   <h3 className="font-semibold text-slate-900">Latest Intelligence</h3>
-                  <button 
-                    onClick={() => setIsAddNewsOpen(true)}
-                    className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-indigo-700 transition-colors shadow-sm"
-                  >
-                      <Plus size={14} /> Add News Link
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleScanNews}
+                      disabled={isScanningNews}
+                      className="flex items-center gap-2 border border-indigo-200 text-indigo-700 bg-indigo-50 px-4 py-2 rounded-lg text-xs font-bold hover:bg-indigo-100 transition-colors disabled:opacity-60"
+                    >
+                        <Search size={14} className={isScanningNews ? "animate-pulse" : ""} />
+                        {isScanningNews ? 'Scanning...' : 'AI Scan'}
+                    </button>
+                    <button
+                      onClick={() => setIsAddNewsOpen(true)}
+                      className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-indigo-700 transition-colors shadow-sm"
+                    >
+                        <Plus size={14} /> Add News Link
+                    </button>
+                  </div>
                </div>
 
                {displayNews.length === 0 ? (
