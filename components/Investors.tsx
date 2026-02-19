@@ -1,7 +1,8 @@
-import React, { useMemo, useState } from 'react';
-import { Search, TrendingUp, ChevronDown, ChevronUp, Building2, DollarSign, Users, Plus, Loader2, Telescope, Check, X, UserPlus, Link, ExternalLink, FileSpreadsheet, ArrowRight } from 'lucide-react';
-import { Company } from '../types';
-import { lookupInvestorPortfolio, lookupInvestorPortfolioFromUrl, extractPortfolioFromText, DiscoveredPortfolioCompany } from '../services/claudeService';
+import React, { useMemo, useState, useEffect } from 'react';
+import { Search, TrendingUp, ChevronDown, ChevronUp, Building2, DollarSign, Users, Plus, Loader2, Telescope, Check, X, UserPlus, Link, ExternalLink, FileSpreadsheet, ArrowRight, Newspaper, ThumbsUp, ThumbsDown } from 'lucide-react';
+import { Company, NewsItem, NewsVote, classifyNewsSourceType, NewsSourceType } from '../types';
+import { lookupInvestorPortfolio, lookupInvestorPortfolioFromUrl, extractPortfolioFromText, scanInvestorNews, DiscoveredPortfolioCompany } from '../services/claudeService';
+import { db } from '../services/db';
 
 interface InvestorsProps {
   companies: Company[];
@@ -148,6 +149,25 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
   const [addingCompanies, setAddingCompanies] = useState<Set<string>>(new Set());
   const [addedCompanies, setAddedCompanies] = useState<Set<string>>(new Set());
 
+  // Investor news feed state
+  const [investorNews, setInvestorNews] = useState<Map<string, NewsItem[]>>(new Map());
+  const [scanningNewsFor, setScanningNewsFor] = useState<string | null>(null);
+  const [newsVotes, setNewsVotes] = useState<Record<string, NewsVote>>({});
+
+  // Load votes from Firestore on mount
+  useEffect(() => {
+    db.getNewsVotes().then(setNewsVotes).catch(() => {});
+  }, []);
+
+  // Auto-scan news when investor is expanded for the first time
+  useEffect(() => {
+    if (expandedInvestor && !investorNews.has(expandedInvestor) && scanningNewsFor !== expandedInvestor) {
+      const inv = investors.find(i => i.name === expandedInvestor);
+      if (inv) {
+        handleScanInvestorNews(inv.name, inv.portfolio.map(c => c.name));
+      }
+    }
+  }, [expandedInvestor]);
 
   const existingCompanyNames = useMemo(() => companies.map(c => c.name), [companies]);
 
@@ -220,6 +240,41 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
     } finally {
       setDiscoveringFor(null);
     }
+  };
+
+  // Scan investment news for an investor
+  const handleScanInvestorNews = async (investorName: string, portfolioNames: string[]) => {
+    setScanningNewsFor(investorName);
+    try {
+      const existingNews = investorNews.get(investorName) || [];
+      const voteFeedback = await db.getVoteSummaryForAI(investorName, existingNews);
+      const scannedNews = await scanInvestorNews(investorName, portfolioNames, voteFeedback);
+      const existingTitles = new Set(existingNews.map(n => n.title.toLowerCase()));
+      const newItems = scannedNews.filter(n => !existingTitles.has(n.title.toLowerCase()));
+      const merged = [...existingNews, ...newItems].sort(
+        (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+      );
+      setInvestorNews(prev => {
+        const next = new Map(prev);
+        next.set(investorName, merged);
+        return next;
+      });
+    } catch (e) {
+      console.error('Investor news scan failed:', e);
+    } finally {
+      setScanningNewsFor(null);
+    }
+  };
+
+  const handleInvestorNewsVote = async (newsId: string, vote: NewsVote) => {
+    const current = newsVotes[newsId];
+    const newVote = current === vote ? undefined : vote;
+    setNewsVotes(prev => {
+      const next = { ...prev };
+      if (newVote) { next[newsId] = newVote; } else { delete next[newsId]; }
+      return next;
+    });
+    await db.setNewsVote(newsId, newVote);
   };
 
   // Detect if a string looks like a URL
@@ -751,6 +806,91 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
                               ))}
                             </div>
                           )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Investment News Feed */}
+                    <div className="mt-4 pt-4 border-t border-slate-200">
+                      <div className="flex items-center justify-between mb-3">
+                        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                          <Newspaper size={12} /> Investment Activity
+                        </p>
+                        {investorNews.has(inv.name) && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleScanInvestorNews(inv.name, inv.portfolio.map(c => c.name)); }}
+                            disabled={scanningNewsFor === inv.name}
+                            className="flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-bold border border-indigo-200 text-indigo-700 bg-indigo-50 rounded-md hover:bg-indigo-100 transition-colors disabled:opacity-60"
+                          >
+                            <Search size={11} className={scanningNewsFor === inv.name ? 'animate-pulse' : ''} />
+                            {scanningNewsFor === inv.name ? 'Scanning...' : 'Rescan'}
+                          </button>
+                        )}
+                      </div>
+
+                      {scanningNewsFor === inv.name && !investorNews.has(inv.name) ? (
+                        <div className="flex items-center gap-2 text-xs text-slate-500 py-4">
+                          <Loader2 size={14} className="animate-spin" />
+                          Scanning for investment news...
+                        </div>
+                      ) : (investorNews.get(inv.name) || []).length === 0 && investorNews.has(inv.name) ? (
+                        <div className="text-center py-6 border border-dashed border-slate-200 rounded-lg bg-white">
+                          <Newspaper size={24} className="mx-auto text-slate-300 mb-1" />
+                          <p className="text-xs text-slate-400">No investment news found</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-2.5">
+                          {(investorNews.get(inv.name) || []).map(item => {
+                            const st = classifyNewsSourceType(item);
+                            const colors: Record<NewsSourceType, string> = {
+                              press: 'bg-blue-50 text-blue-700 border-blue-100',
+                              press_release: 'bg-amber-50 text-amber-700 border-amber-100',
+                              partnership: 'bg-emerald-50 text-emerald-700 border-emerald-100',
+                            };
+                            const labels: Record<NewsSourceType, string> = { press: 'Press', press_release: 'Press Release', partnership: 'Partnership' };
+                            return (
+                              <div key={item.id} className="bg-white p-4 rounded-lg border border-slate-200 hover:shadow-sm transition-all">
+                                <div className="flex justify-between items-start mb-1.5">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide border ${colors[st]}`}>
+                                      {labels[st]}
+                                    </span>
+                                    {item.source && !['Intelligence', 'Manual Entry'].includes(item.source) && (
+                                      <span className="text-[10px] font-bold bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded uppercase tracking-wide">
+                                        {item.source}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="text-slate-400 text-[10px] font-medium">{item.date}</span>
+                                </div>
+                                <h4 className="text-sm font-bold text-slate-900 mb-1">{item.title}</h4>
+                                <p className="text-xs text-slate-600 leading-relaxed mb-2.5">{item.summary}</p>
+                                <div className="flex items-center justify-between">
+                                  {item.url && item.url !== '#' ? (
+                                    <a href={item.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-600 hover:underline">
+                                      Read Source <ExternalLink size={10} />
+                                    </a>
+                                  ) : <span />}
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      onClick={() => handleInvestorNewsVote(item.id, 'up')}
+                                      className={`p-1 rounded-md transition-colors ${newsVotes[item.id] === 'up' ? 'bg-emerald-100 text-emerald-700' : 'text-slate-300 hover:text-emerald-600 hover:bg-emerald-50'}`}
+                                      title="Relevant — show more like this"
+                                    >
+                                      <ThumbsUp size={12} />
+                                    </button>
+                                    <button
+                                      onClick={() => handleInvestorNewsVote(item.id, 'down')}
+                                      className={`p-1 rounded-md transition-colors ${newsVotes[item.id] === 'down' ? 'bg-red-100 text-red-600' : 'text-slate-300 hover:text-red-500 hover:bg-red-50'}`}
+                                      title="Not relevant — show fewer like this"
+                                    >
+                                      <ThumbsDown size={12} />
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
                       )}
                     </div>

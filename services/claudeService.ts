@@ -589,6 +589,146 @@ RETURN ONLY RAW JSON ARRAY.`;
   return candidates;
 };
 
+export const scanInvestorNews = async (
+  investorName: string,
+  portfolioCompanyNames: string[],
+  voteFeedback?: { liked: string[]; disliked: string[] }
+): Promise<NewsItem[]> => {
+  logger.info('news', `scanInvestorNews called for "${investorName}" (${portfolioCompanyNames.length} portfolio cos)`);
+
+  // No time limit on search — use a wide date range
+  const searchQuery = `"${investorName}" AND (investment OR funding OR "Series" OR stablecoin OR "tokenized" OR "digital asset" OR blockchain)`;
+  const apiArticles = await fetchNewsFromAPI(searchQuery);
+
+  let candidates: NewsItem[] = [];
+
+  if (apiArticles.length > 0) {
+    logger.info('news', `Got ${apiArticles.length} articles from NewsAPI for investor ${investorName}`);
+    candidates = apiArticles
+      .filter((a) => a.title && a.summary)
+      .map((article, idx) => ({
+        id: `inv-scan-${Date.now()}-${idx}`,
+        title: article.title,
+        source: article.source || 'News',
+        date: article.date || new Date().toISOString().split('T')[0],
+        summary: article.summary,
+        url: article.url || '#',
+        relatedCompanies: [investorName],
+        sourceType: 'press' as const,
+      }));
+  } else {
+    logger.warn('news', `NewsAPI returned 0 articles for investor ${investorName}, falling back to Claude`);
+
+    let feedbackBlock = '';
+    if (voteFeedback && (voteFeedback.liked.length > 0 || voteFeedback.disliked.length > 0)) {
+      feedbackBlock = '\n\nUSER FEEDBACK — use this to calibrate relevance:\n';
+      if (voteFeedback.liked.length > 0) {
+        feedbackBlock += `GOOD examples (user liked these):\n${voteFeedback.liked.slice(0, 8).map(t => `  - "${t}"`).join('\n')}\n`;
+      }
+      if (voteFeedback.disliked.length > 0) {
+        feedbackBlock += `BAD examples (user rejected these — avoid similar topics):\n${voteFeedback.disliked.slice(0, 8).map(t => `  - "${t}"`).join('\n')}\n`;
+      }
+    }
+
+    const portfolioContext = portfolioCompanyNames.length > 0
+      ? `\nKnown portfolio companies: ${portfolioCompanyNames.slice(0, 20).join(', ')}`
+      : '';
+
+    const fallbackPrompt = `Based on your knowledge, provide notable news about "${investorName}" and their INVESTMENTS in startups relevant to: stablecoins, tokenized deposits, tokenized funds, tokenized assets, crypto treasury, digital assets, blockchain infrastructure, and CBDC.
+
+IMPORTANT FILTERS:
+- Focus ONLY on investment activity: funding rounds led or participated in, new portfolio additions, exits
+- Include investments at ANY date — no time limit, go as far back as relevant
+- Each article must be about "${investorName}" making or managing an investment, not general market news
+- EXCLUDE general crypto market commentary, token price speculation, or trading advice
+- EXCLUDE articles where "${investorName}" is only briefly mentioned${portfolioContext}
+${feedbackBlock}
+Return a JSON array where each item has:
+- "title": string (headline)
+- "source": string (publication name)
+- "date": string (YYYY-MM-DD)
+- "summary": string (2-3 sentences focusing on the investment details)
+
+Include 6-12 items. Only include events you are confident actually happened.
+RETURN ONLY RAW JSON ARRAY.`;
+
+    try {
+      candidates = await executeWithRetry('scanInvestorNews', async () => {
+        const text = await callClaude(fallbackPrompt, SYSTEM_PROMPT, 0.3);
+        const json = parseJSON(text);
+        if (!Array.isArray(json)) return [];
+        return json
+          .filter((item: any) => item && typeof item.title === 'string' && typeof item.summary === 'string')
+          .map((item: any, idx: number) => ({
+            id: `inv-scan-${Date.now()}-${idx}`,
+            title: item.title,
+            source: typeof item.source === 'string' ? item.source : 'Intelligence',
+            date: typeof item.date === 'string' ? item.date : new Date().toISOString().split('T')[0],
+            summary: item.summary,
+            url: '#',
+            relatedCompanies: [investorName],
+            sourceType: 'press_release' as const,
+          }));
+      });
+    } catch (error: any) {
+      logger.error('news', `scanInvestorNews fallback failed for ${investorName}`, error?.message || String(error));
+      return [];
+    }
+  }
+
+  if (candidates.length === 0) return [];
+
+  // --- RELEVANCE FILTER ---
+  let feedbackContext = '';
+  if (voteFeedback && (voteFeedback.liked.length > 0 || voteFeedback.disliked.length > 0)) {
+    feedbackContext = '\n\nUSER FEEDBACK — past votes:\n';
+    if (voteFeedback.liked.length > 0) {
+      feedbackContext += `LIKED: ${voteFeedback.liked.slice(0, 6).map(t => `"${t}"`).join(', ')}\n`;
+    }
+    if (voteFeedback.disliked.length > 0) {
+      feedbackContext += `DISLIKED: ${voteFeedback.disliked.slice(0, 6).map(t => `"${t}"`).join(', ')}\n`;
+    }
+  }
+
+  const articlesForReview = candidates.map((c, i) => ({
+    index: i,
+    title: c.title,
+    summary: c.summary,
+  }));
+
+  const filterPrompt = `Review these articles and determine which are truly about "${investorName}" making investments in startups relevant to stablecoins, tokenized deposits/funds/assets, digital assets, blockchain infrastructure, or crypto treasury.
+
+ARTICLES:
+${JSON.stringify(articlesForReview, null, 2)}
+
+RULES:
+1. KEEP only articles where "${investorName}" is a PRIMARY subject making/managing an investment
+2. KEEP articles about: funding rounds, portfolio company announcements, exits, fund launches
+3. REJECT general market news, token recommendations, or speculative commentary
+4. REJECT articles where "${investorName}" is only mentioned as background context
+${feedbackContext}
+Return a JSON array of index numbers for articles that PASS the filter.
+RETURN ONLY RAW JSON ARRAY.`;
+
+  try {
+    const filterResult = await executeWithRetry('scanInvestorNews-filter', async () => {
+      const text = await callClaude(filterPrompt, SYSTEM_PROMPT, 0.2);
+      return parseJSON(text);
+    });
+
+    if (Array.isArray(filterResult)) {
+      const kept = new Set(filterResult.filter((i: any) => typeof i === 'number'));
+      const filtered = candidates.filter((_, i) => kept.has(i));
+      logger.info('news', `Investor relevance filter: ${filtered.length}/${candidates.length} articles kept for ${investorName}`);
+      return filtered;
+    }
+  } catch (error: any) {
+    logger.warn('news', `Investor relevance filter failed for ${investorName}, returning all`, error?.message || String(error));
+  }
+
+  return candidates;
+};
+
 export const scanForNewPartnerships = async (
   companyName: string,
   existingPartnerNames: string[]
