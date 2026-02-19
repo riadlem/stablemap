@@ -57,7 +57,12 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
   const [tempName, setTempName] = useState(company.name);
   const [isAddNewsOpen, setIsAddNewsOpen] = useState(false);
   const [isScanningNews, setIsScanningNews] = useState(false);
-  const [newsVotes, setNewsVotes] = useState<Record<string, NewsVote>>(() => db.getNewsVotes());
+  const [newsVotes, setNewsVotes] = useState<Record<string, NewsVote>>({});
+
+  // Load votes from Firestore on mount
+  useEffect(() => {
+    db.getNewsVotes().then(setNewsVotes).catch(() => {});
+  }, []);
 
   // Job Interaction State
   const [flaggingJobId, setFlaggingJobId] = useState<string | null>(null);
@@ -158,7 +163,7 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
   const handleScanNews = async () => {
       setIsScanningNews(true);
       try {
-          const voteFeedback = db.getVoteSummaryForAI(company.name, displayNews);
+          const voteFeedback = await db.getVoteSummaryForAI(company.name, displayNews);
           const scannedNews = await scanCompanyNews(company.name, voteFeedback);
           if (scannedNews.length > 0) {
               const existingIds = new Set(displayNews.map(n => n.id));
@@ -182,15 +187,17 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
       setIsScanningNews(false);
   };
 
-  const handleNewsVote = (newsId: string, vote: NewsVote) => {
+  const handleNewsVote = async (newsId: string, vote: NewsVote) => {
       const current = newsVotes[newsId];
       const newVote = current === vote ? undefined : vote;
-      db.setNewsVote(newsId, newVote);
+      // Optimistic update
       setNewsVotes(prev => {
           const next = { ...prev };
           if (newVote) { next[newsId] = newVote; } else { delete next[newsId]; }
           return next;
       });
+      // Persist to Firestore + localStorage
+      await db.setNewsVote(newsId, newVote);
   };
 
   const handleDeleteClick = async () => {

@@ -20,7 +20,8 @@ const COLLECTIONS = {
   NEWS: 'news',
   SYSTEM: 'system',
   GLOBAL500: 'global500_activity',
-  LISTS: 'company_lists'
+  LISTS: 'company_lists',
+  NEWS_VOTES: 'news_votes'
 };
 
 const LS_KEYS = {
@@ -654,8 +655,27 @@ export const db = {
 
   /**
    * Get all news votes: { [newsId]: 'up' | 'down' }
+   * Reads from Firestore first, falls back to localStorage
    */
-  getNewsVotes(): Record<string, NewsVote> {
+  async getNewsVotes(): Promise<Record<string, NewsVote>> {
+    // --- FIREBASE MODE ---
+    if (!checkOffline()) {
+      try {
+        const docRef = doc(dbInstance, COLLECTIONS.NEWS_VOTES, 'all');
+        const docSnap = await withTimeout<DocumentSnapshot<DocumentData>>(getDoc(docRef), 3000);
+        if (docSnap.exists()) {
+          const data = docSnap.data() as Record<string, NewsVote>;
+          // Sync to localStorage for fast reads
+          localStorage.setItem(LS_KEYS.NEWS_VOTES, JSON.stringify(data));
+          return data;
+        }
+      } catch (e: any) {
+        console.warn("[DB] Error fetching news votes from Firestore:", e.message);
+        goOffline();
+      }
+    }
+
+    // --- LOCAL STORAGE FALLBACK ---
     try {
       const stored = localStorage.getItem(LS_KEYS.NEWS_VOTES);
       return stored ? JSON.parse(stored) : {};
@@ -664,22 +684,42 @@ export const db = {
 
   /**
    * Set vote for a single news item (or remove if vote is undefined)
+   * Persists to both Firestore and localStorage
    */
-  setNewsVote(newsId: string, vote: NewsVote | undefined): void {
-    const votes = this.getNewsVotes();
+  async setNewsVote(newsId: string, vote: NewsVote | undefined): Promise<void> {
+    // Read current votes from localStorage for immediate update
+    let votes: Record<string, NewsVote> = {};
+    try {
+      const stored = localStorage.getItem(LS_KEYS.NEWS_VOTES);
+      votes = stored ? JSON.parse(stored) : {};
+    } catch { /* start fresh */ }
+
     if (vote) {
       votes[newsId] = vote;
     } else {
       delete votes[newsId];
     }
+
+    // --- LOCAL STORAGE (immediate) ---
     localStorage.setItem(LS_KEYS.NEWS_VOTES, JSON.stringify(votes));
+
+    // --- FIREBASE MODE (async) ---
+    if (!checkOffline()) {
+      try {
+        const docRef = doc(dbInstance, COLLECTIONS.NEWS_VOTES, 'all');
+        await withTimeout(setDoc(docRef, sanitizeForFirestore(votes)), 3000);
+      } catch (e: any) {
+        console.error("[DB] Error saving news vote to Firestore:", e.message);
+        goOffline();
+      }
+    }
   },
 
   /**
    * Get voted news summaries for AI context (titles + vote direction)
    */
-  getVoteSummaryForAI(companyName: string, allNews: NewsItem[]): { liked: string[]; disliked: string[] } {
-    const votes = this.getNewsVotes();
+  async getVoteSummaryForAI(companyName: string, allNews: NewsItem[]): Promise<{ liked: string[]; disliked: string[] }> {
+    const votes = await this.getNewsVotes();
     const liked: string[] = [];
     const disliked: string[] = [];
     for (const item of allNews) {
