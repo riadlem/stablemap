@@ -27,7 +27,7 @@ const Intelligence: React.FC<IntelligenceProps> = ({ directoryCompanies = [], co
   const [initializing, setInitializing] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
   const [filterType, setFilterType] = useState<'All' | 'Global' | 'Directory'>('All');
-  const [sourceFilter, setSourceFilter] = useState<'all' | NewsSourceType>('all');
+  const [sourceFilter, setSourceFilter] = useState<'all' | NewsSourceType>('press');
 
   // Helper to check for old news
   const isWithinLast12Months = (dateStr: string) => {

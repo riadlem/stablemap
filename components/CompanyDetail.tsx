@@ -77,6 +77,9 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
   // Partner add-to-directory state
   const [addingPartner, setAddingPartner] = useState<string | null>(null);
 
+  // News source type filter (Press default)
+  const [newsSourceFilter, setNewsSourceFilter] = useState<'press' | 'press_release' | 'partnership'>('press');
+
   // News: company.recentNews merged with global store items that mention this company
   const [displayNews, setDisplayNews] = useState<NewsItem[]>(
     (company.recentNews || []).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
@@ -227,6 +230,18 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
       }
       setIsEditingName(false);
   };
+
+  // News filtering by source type
+  const newsSourceCounts = useMemo(() => {
+    const counts = { press: 0, press_release: 0, partnership: 0 };
+    displayNews.forEach(item => { counts[classifyNewsSourceType(item)]++; });
+    return counts;
+  }, [displayNews]);
+
+  const filteredDisplayNews = useMemo(() =>
+    displayNews.filter(item => classifyNewsSourceType(item) === newsSourceFilter),
+    [displayNews, newsSourceFilter]
+  );
 
   // Partner add/remove handlers (type-specific: same company can be both partner & investor)
   const handleRemovePartner = async (partnerName: string, partnerType: Partner['type']) => {
@@ -697,7 +712,7 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
 
         {activeTab === 'news' && (
             <div>
-               <div className="flex justify-between items-center mb-6">
+               <div className="flex justify-between items-center mb-4">
                   <h3 className="font-semibold text-slate-900">Latest Intelligence</h3>
                   <div className="flex items-center gap-2">
                     <button
@@ -717,15 +732,44 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
                   </div>
                </div>
 
+               {/* Source type category tabs */}
+               <div className="flex gap-2 mb-5">
+                 {([
+                   { key: 'press' as const, label: 'Press', count: newsSourceCounts.press, color: 'blue' },
+                   { key: 'partnership' as const, label: 'Partnership', count: newsSourceCounts.partnership, color: 'emerald' },
+                   { key: 'press_release' as const, label: 'Press Releases', count: newsSourceCounts.press_release, color: 'amber' },
+                 ]).map(({ key, label, count, color }) => (
+                   <button
+                     key={key}
+                     onClick={() => setNewsSourceFilter(key)}
+                     className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wide transition-all ${
+                       newsSourceFilter === key
+                         ? `bg-${color}-600 text-white shadow-sm`
+                         : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                     }`}
+                     style={newsSourceFilter === key ? {
+                       backgroundColor: color === 'blue' ? '#2563eb' : color === 'emerald' ? '#059669' : '#d97706',
+                       color: 'white'
+                     } : undefined}
+                   >
+                     {label} <span className="opacity-70 ml-1">{count}</span>
+                   </button>
+                 ))}
+               </div>
+
                {displayNews.length === 0 ? (
                    <div className="text-center py-12 border-2 border-dashed border-slate-200 rounded-xl bg-slate-50">
                        <Newspaper size={32} className="mx-auto text-slate-300 mb-2" />
                        <p className="text-slate-500 text-sm font-medium">No recent news tracked.</p>
                        <p className="text-slate-400 text-xs mt-1">Add a link to keep this profile updated.</p>
                    </div>
+               ) : filteredDisplayNews.length === 0 ? (
+                   <div className="text-center py-8 border border-dashed border-slate-200 rounded-xl bg-slate-50">
+                       <p className="text-slate-400 text-sm">No {newsSourceFilter === 'press' ? 'press' : newsSourceFilter === 'partnership' ? 'partnership' : 'press release'} articles found.</p>
+                   </div>
                ) : (
                    <div className="space-y-4">
-                       {displayNews.map(item => (
+                       {filteredDisplayNews.map(item => (
                            <div key={item.id} className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-all group">
                                 <div className="flex justify-between items-start mb-2">
                                     {(() => {

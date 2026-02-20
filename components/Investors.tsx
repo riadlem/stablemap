@@ -159,6 +159,10 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
   const [scanningNewsFor, setScanningNewsFor] = useState<string | null>(null);
   const [newsVotes, setNewsVotes] = useState<Record<string, NewsVote>>({});
 
+  // News source filter state (per-investor accordion + combined tab)
+  const [accordionNewsFilter, setAccordionNewsFilter] = useState<'press' | 'press_release' | 'partnership'>('press');
+  const [combinedNewsFilter, setCombinedNewsFilter] = useState<'press' | 'press_release' | 'partnership'>('press');
+
   // Investment News tab state
   const [activeInvestorTab, setActiveInvestorTab] = useState<'investors' | 'news'>('investors');
   const [combinedInvestorNews, setCombinedInvestorNews] = useState<NewsItem[]>([]);
@@ -1062,9 +1066,36 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
                           <Newspaper size={24} className="mx-auto text-slate-300 mb-1" />
                           <p className="text-xs text-slate-400">No investment news found</p>
                         </div>
-                      ) : (
+                      ) : (investorNews.get(inv.name) || []).length > 0 ? (
+                        <div>
+                          {/* Source type filter tabs */}
+                          {(() => {
+                            const allItems = investorNews.get(inv.name) || [];
+                            const counts = { press: 0, press_release: 0, partnership: 0 };
+                            allItems.forEach(n => { counts[classifyNewsSourceType(n)]++; });
+                            return (
+                              <div className="flex gap-1.5 mb-3">
+                                {([
+                                  { key: 'press' as const, label: 'Press', count: counts.press, bg: '#2563eb' },
+                                  { key: 'partnership' as const, label: 'Partnership', count: counts.partnership, bg: '#059669' },
+                                  { key: 'press_release' as const, label: 'Press Releases', count: counts.press_release, bg: '#d97706' },
+                                ]).map(({ key, label, count, bg }) => (
+                                  <button
+                                    key={key}
+                                    onClick={(e) => { e.stopPropagation(); setAccordionNewsFilter(key); }}
+                                    className={`px-2 py-1 rounded text-[9px] font-bold uppercase tracking-wide transition-all ${
+                                      accordionNewsFilter === key ? 'text-white shadow-sm' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                                    }`}
+                                    style={accordionNewsFilter === key ? { backgroundColor: bg, color: 'white' } : undefined}
+                                  >
+                                    {label} <span className="opacity-70 ml-0.5">{count}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            );
+                          })()}
                         <div className="space-y-2.5">
-                          {(investorNews.get(inv.name) || []).map(item => {
+                          {(investorNews.get(inv.name) || []).filter(item => classifyNewsSourceType(item) === accordionNewsFilter).map(item => {
                             const st = classifyNewsSourceType(item);
                             const colors: Record<NewsSourceType, string> = {
                               press: 'bg-blue-50 text-blue-700 border-blue-100',
@@ -1115,8 +1146,12 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
                               </div>
                             );
                           })}
+                          {(investorNews.get(inv.name) || []).filter(item => classifyNewsSourceType(item) === accordionNewsFilter).length === 0 && (
+                            <p className="text-xs text-slate-400 text-center py-4">No articles in this category.</p>
+                          )}
                         </div>
-                      )}
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                 )}
@@ -1168,6 +1203,32 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
             </div>
           )}
 
+          {/* Source type filter tabs */}
+          {combinedInvestorNews.length > 0 && (
+            <div className="flex gap-2">
+              {(() => {
+                const counts = { press: 0, press_release: 0, partnership: 0 };
+                combinedInvestorNews.forEach(n => { counts[classifyNewsSourceType(n)]++; });
+                return ([
+                  { key: 'press' as const, label: 'Press', count: counts.press, bg: '#2563eb' },
+                  { key: 'partnership' as const, label: 'Partnership', count: counts.partnership, bg: '#059669' },
+                  { key: 'press_release' as const, label: 'Press Releases', count: counts.press_release, bg: '#d97706' },
+                ]).map(({ key, label, count, bg }) => (
+                  <button
+                    key={key}
+                    onClick={() => setCombinedNewsFilter(key)}
+                    className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wide transition-all ${
+                      combinedNewsFilter === key ? 'text-white shadow-sm' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                    }`}
+                    style={combinedNewsFilter === key ? { backgroundColor: bg, color: 'white' } : undefined}
+                  >
+                    {label} <span className="opacity-70 ml-1">{count}</span>
+                  </button>
+                ));
+              })()}
+            </div>
+          )}
+
           {/* Feed */}
           {isLoadingCombinedNews ? (
             <div className="flex items-center gap-2 text-sm text-slate-500 py-8 justify-center">
@@ -1181,7 +1242,11 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
             </div>
           ) : (
             <div className="space-y-4">
-              {combinedInvestorNews.map(item => {
+              {combinedInvestorNews.filter(item => classifyNewsSourceType(item) === combinedNewsFilter).length === 0 ? (
+                <div className="text-center py-8 border border-dashed border-slate-200 rounded-xl bg-slate-50">
+                  <p className="text-slate-400 text-sm">No articles in this category.</p>
+                </div>
+              ) : combinedInvestorNews.filter(item => classifyNewsSourceType(item) === combinedNewsFilter).map(item => {
                 const st = classifyNewsSourceType(item);
                 const colors: Record<NewsSourceType, string> = {
                   press: 'bg-blue-50 text-blue-700 border-blue-100',
