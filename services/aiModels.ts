@@ -1,8 +1,8 @@
 // Multi-provider AI model rotation
-// Supports Anthropic, OpenAI, and Google Gemini
+// Supports Anthropic, OpenAI, Google Gemini, and OpenRouter (free models)
 // The proxy layer (dev-server.js / api/ai.js) holds all API keys server-side
 
-export type AIProvider = 'anthropic' | 'openai' | 'google';
+export type AIProvider = 'anthropic' | 'openai' | 'google' | 'openrouter';
 
 export interface ModelConfig {
   id: string;             // e.g. "claude-sonnet-4-5-20250929"
@@ -15,6 +15,7 @@ export interface ModelConfig {
 // --- MODEL ROSTER ---
 // Order matters: first model is the primary, rest are fallbacks.
 // Add/remove models here to change the rotation pool.
+// OpenRouter free models have ":free" suffix — no cost, rate-limited.
 
 export const MODEL_ROSTER: ModelConfig[] = [
   {
@@ -36,6 +37,28 @@ export const MODEL_ROSTER: ModelConfig[] = [
     provider: 'google',
     displayName: 'Gemini 2.0 Flash',
     maxTokens: 8192,
+    proxyEndpoint: '/api/ai',
+  },
+  // --- OpenRouter free models (no cost, 50 req/day or 1k/day with credits) ---
+  {
+    id: 'deepseek/deepseek-r1-0528:free',
+    provider: 'openrouter',
+    displayName: 'DeepSeek R1',
+    maxTokens: 8192,
+    proxyEndpoint: '/api/ai',
+  },
+  {
+    id: 'meta-llama/llama-4-maverick:free',
+    provider: 'openrouter',
+    displayName: 'Llama 4 Maverick',
+    maxTokens: 4096,
+    proxyEndpoint: '/api/ai',
+  },
+  {
+    id: 'qwen/qwen3-235b-a22b:free',
+    provider: 'openrouter',
+    displayName: 'Qwen3 235B',
+    maxTokens: 4096,
     proxyEndpoint: '/api/ai',
   },
 ];
@@ -106,9 +129,11 @@ export const buildRequestBody = (
       };
 
     case 'openai':
+    case 'openrouter':
+      // OpenRouter is OpenAI-compatible — same request format
       return {
         ...base,
-        max_tokens: Math.min(model.maxTokens, 4096),
+        max_tokens: Math.min(model.maxTokens, 8192),
         messages: [
           ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
           { role: 'user', content: prompt },
@@ -157,8 +182,8 @@ export const extractResponseText = (
     }
   }
 
-  // Raw OpenAI format
-  if (provider === 'openai' && data.choices?.[0]?.message?.content) {
+  // Raw OpenAI / OpenRouter format
+  if ((provider === 'openai' || provider === 'openrouter') && data.choices?.[0]?.message?.content) {
     return data.choices[0].message.content;
   }
 

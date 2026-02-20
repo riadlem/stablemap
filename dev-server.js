@@ -9,11 +9,12 @@ const PORT = 3001;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const GOOGLE_AI_API_KEY = process.env.GOOGLE_AI_API_KEY;
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const NEWS_API_KEY = process.env.NEWS_API_KEY;
 
 // At least one AI provider key is required
-if (!ANTHROPIC_API_KEY && !OPENAI_API_KEY && !GOOGLE_AI_API_KEY) {
-  console.error('❌ No AI provider API key set. Set at least one of: ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_AI_API_KEY');
+if (!ANTHROPIC_API_KEY && !OPENAI_API_KEY && !GOOGLE_AI_API_KEY && !OPENROUTER_API_KEY) {
+  console.error('❌ No AI provider API key set. Set at least one of: ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_AI_API_KEY, OPENROUTER_API_KEY');
   process.exit(1);
 }
 
@@ -21,6 +22,7 @@ const configured = [];
 if (ANTHROPIC_API_KEY) configured.push('Anthropic');
 if (OPENAI_API_KEY) configured.push('OpenAI');
 if (GOOGLE_AI_API_KEY) configured.push('Google Gemini');
+if (OPENROUTER_API_KEY) configured.push('OpenRouter');
 console.log(`🔑 AI providers configured: ${configured.join(', ')}`);
 
 if (!NEWS_API_KEY) {
@@ -177,6 +179,46 @@ async function callGoogle(body) {
   return { status: response.status, data };
 }
 
+async function callOpenRouter(body) {
+  if (!OPENROUTER_API_KEY) {
+    return { status: 501, data: { error: 'OPENROUTER_API_KEY not configured' } };
+  }
+
+  // OpenRouter uses the OpenAI-compatible chat completions format
+  const openrouterBody = {
+    model: body.model || 'openrouter/auto',
+    max_tokens: Math.min(body.max_tokens || 4096, 8192),
+    messages: body.messages,
+    temperature: body.temperature ?? 0.7,
+  };
+
+  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+      'HTTP-Referer': 'https://stablemap.app',
+      'X-Title': 'StableMap',
+    },
+    body: JSON.stringify(openrouterBody),
+  });
+
+  const data = await response.json();
+
+  // Normalise OpenAI-format response → common format
+  if (response.ok && data.choices?.[0]?.message?.content) {
+    return {
+      status: response.status,
+      data: {
+        content: [{ type: 'text', text: data.choices[0].message.content }],
+        _raw: data,
+      },
+    };
+  }
+
+  return { status: response.status, data };
+}
+
 // --- Route: /api/ai (multi-provider) ---
 async function handleAI(req, res) {
   try {
@@ -190,6 +232,9 @@ async function handleAI(req, res) {
         break;
       case 'google':
         result = await callGoogle(body);
+        break;
+      case 'openrouter':
+        result = await callOpenRouter(body);
         break;
       case 'anthropic':
       default:

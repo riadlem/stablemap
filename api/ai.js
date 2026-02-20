@@ -1,5 +1,5 @@
 // Vercel Serverless Function — multi-provider AI proxy
-// Routes requests to Anthropic, OpenAI, or Google Gemini based on `provider` field
+// Routes requests to Anthropic, OpenAI, Google Gemini, or OpenRouter based on `provider` field
 // API keys are stored as Vercel environment variables (never exposed to the browser)
 
 export const config = {
@@ -129,6 +129,40 @@ async function callGoogle(body) {
   return jsonResponse(data, response.status);
 }
 
+async function callOpenRouter(body) {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) return jsonResponse({ error: 'OPENROUTER_API_KEY not configured' }, 501);
+
+  const openrouterBody = {
+    model: body.model || 'openrouter/auto',
+    max_tokens: Math.min(body.max_tokens || 4096, 8192),
+    messages: body.messages,
+    temperature: body.temperature ?? 0.7,
+  };
+
+  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+      'HTTP-Referer': 'https://stablemap.app',
+      'X-Title': 'StableMap',
+    },
+    body: JSON.stringify(openrouterBody),
+  });
+
+  const data = await response.json();
+
+  // Normalise OpenAI-format response → common format
+  if (response.ok && data.choices?.[0]?.message?.content) {
+    return jsonResponse({
+      content: [{ type: 'text', text: data.choices[0].message.content }],
+    });
+  }
+
+  return jsonResponse(data, response.status);
+}
+
 // --- Main handler ---
 
 export default async function handler(req) {
@@ -154,6 +188,8 @@ export default async function handler(req) {
         return await callOpenAI(body);
       case 'google':
         return await callGoogle(body);
+      case 'openrouter':
+        return await callOpenRouter(body);
       case 'anthropic':
       default:
         return await callAnthropic(body);
