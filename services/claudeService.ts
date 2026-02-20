@@ -477,16 +477,26 @@ export const enrichCompanyData = async (
 
     let description = '';
     let website = '';
+    let aiPartners: Partner[] = [];
     try {
       const aiResponse = await callAI(
-        `Based on this information about "${companyName}":\n\n${rawContext}\n\nRespond with EXACTLY this format (two sections separated by "---"):\n\nDESCRIPTION:\nOne sentence about what ${companyName} is (core business, sector, where it is based).\n\n- Bullet point about a specific product, platform, or service\n- Bullet point about a relevant partnership, initiative, or activity\n- Bullet point about another concrete activity or achievement\n\n---\nWEBSITE: https://example.com\n\nRules:\n- Description first line: ONE sentence, what the company does. No founder names, no CEO names, no people.\n- Then bullet points (3-5 max) about concrete activities in stablecoin, digital asset, blockchain, tokenization, or fintech. Each bullet must be unique — no duplicate or overlapping info.\n- Do NOT mention founders, CEOs, executives, or any person by name.\n- Do NOT use markdown bold (**) or italic (*). Plain text only.\n- Do NOT repeat the company name at the start of every bullet.\n- WEBSITE: the company's official homepage URL (not Wikipedia, not Crunchbase, not LinkedIn, not news sites). If unsure, write "unknown".`,
+        `Based on this information about "${companyName}":\n\n${rawContext}\n\nRespond with EXACTLY this format (three sections separated by "---"):\n\nDESCRIPTION:\nOne sentence about what ${companyName} is (core business, sector, where it is based).\n\n- Bullet point about a specific product, platform, or service\n- Bullet point about a relevant partnership, initiative, or activity\n- Bullet point about another concrete activity or achievement\n\n---\nPARTNERS:\n- PartnerName | type | short description of the relationship\n- PartnerName | type | short description of the relationship\n\n---\nWEBSITE: https://example.com\n\nRules for DESCRIPTION:\n- First line: ONE sentence, what the company does. No founder names, no CEO names, no people.\n- Then bullet points (3-5 max) about concrete activities in stablecoin, digital asset, blockchain, tokenization, or fintech. Each bullet must be unique — no duplicate or overlapping info.\n- Do NOT mention founders, CEOs, executives, or any person by name.\n- Do NOT use markdown bold (**) or italic (*). Plain text only.\n- Do NOT repeat the company name at the start of every bullet.\n\nRules for PARTNERS:\n- List companies/organizations that ${companyName} has partnered with, integrated with, built on, or collaborates with.\n- Also list investors/backers if mentioned (use type "Investor").\n- type must be one of: Fortune500Global, CryptoNative, Investor\n- Use Fortune500Global for large traditional companies (banks, tech giants, payment networks).\n- Use CryptoNative for blockchain/crypto/DeFi companies.\n- Use Investor for VCs, funds, and backers.\n- Only the company/org name — no people, no "as a partner", no extra words.\n- Max 10 partners. Only include ones with evidence in the search results.\n- If none found, write "none"\n\nRules for WEBSITE:\n- The company's official homepage URL (not Wikipedia, not Crunchbase, not LinkedIn, not news sites). If unsure, write "unknown".`,
         'You extract structured company data from search results. No filler, no markdown formatting, no people names.'
       );
 
-      // Parse the AI response
-      const parts = aiResponse.split('---');
+      // Parse the AI response (3 sections separated by ---)
+      const parts = aiResponse.split('---').map(s => s.trim());
       const descPart = parts[0] || '';
-      const metaPart = parts[1] || '';
+      // Identify sections by content — models sometimes reorder
+      let partnersPart = '';
+      let metaPart = '';
+      for (let i = 1; i < parts.length; i++) {
+        if (/^PARTNERS:/im.test(parts[i])) partnersPart = parts[i];
+        else if (/WEBSITE:/im.test(parts[i])) metaPart = parts[i];
+      }
+      // Fallback: if no labeled match, use positional
+      if (!partnersPart && parts.length > 2) partnersPart = parts[1];
+      if (!metaPart && parts.length > 1) metaPart = parts[parts.length - 1];
 
       // Extract description (strip the "DESCRIPTION:" prefix if present)
       let rawDesc = descPart.replace(/^DESCRIPTION:\s*/i, '').trim();
@@ -540,6 +550,38 @@ export const enrichCompanyData = async (
       if (websiteMatch && !websiteMatch[1].includes('unknown')) {
         website = websiteMatch[1].trim();
       }
+
+      // Extract AI-identified partners
+      const partnersSection = partnersPart.replace(/^PARTNERS:\s*/i, '').trim();
+      if (partnersSection && !/^none$/i.test(partnersSection.trim())) {
+        const partnerLines = partnersSection.split('\n').filter(l => l.trim().startsWith('-'));
+        for (const line of partnerLines) {
+          const cleaned = line.replace(/^-\s*/, '').trim();
+          const segments = cleaned.split('|').map(s => s.trim());
+          if (segments.length >= 2) {
+            let pName = segments[0]
+              .replace(/\*{1,3}/g, '')  // strip markdown
+              .replace(/\s+/g, ' ')
+              .trim();
+            const rawType = segments[1].toLowerCase();
+            const pDesc = segments[2] || '';
+
+            // Validate and map type
+            let pType: 'Fortune500Global' | 'CryptoNative' | 'Investor' = 'CryptoNative';
+            if (rawType.includes('fortune') || rawType.includes('500') || rawType.includes('global') || rawType.includes('traditional')) pType = 'Fortune500Global';
+            else if (rawType.includes('investor') || rawType.includes('backer') || rawType.includes('vc')) pType = 'Investor';
+
+            if (
+              pName.length > 1 &&
+              pName.length < 60 &&
+              pName.toLowerCase() !== companyName.toLowerCase() &&
+              !/\b(as a|as the|will be|has been)\b/i.test(pName)
+            ) {
+              aiPartners.push({ name: pName, type: pType, description: pDesc });
+            }
+          }
+        }
+      }
     } catch (err) {
       logger.warn('ai', `AI description generation failed for ${companyName}`);
     }
@@ -574,8 +616,16 @@ export const enrichCompanyData = async (
     const { headquarters, country, region } = extractLocationFromText(allText);
     const industry = determineIndustry(allText);
 
-    // Extract partners from search results
-    const partners = extractPartnersFromSearch(results, companyName);
+    // Extract partners: merge AI-extracted + regex-extracted, deduplicating by name
+    const regexPartners = extractPartnersFromSearch(results, companyName);
+    const partnerMap = new Map<string, Partner>();
+    // AI partners first (higher quality — typed and described)
+    for (const p of aiPartners) partnerMap.set(p.name.toLowerCase(), p);
+    // Regex partners fill in any the AI missed
+    for (const p of regexPartners) {
+      if (!partnerMap.has(p.name.toLowerCase())) partnerMap.set(p.name.toLowerCase(), p);
+    }
+    const partners = [...partnerMap.values()].slice(0, 15);
 
     // Try to extract funding info
     const funding = extractFundingFromText(allText);
