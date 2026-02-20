@@ -239,6 +239,13 @@ const categorizeFromText = (text: string, companyName?: string): Category[] => {
     if (infraIdx !== -1) cats.splice(infraIdx, 1);
   }
 
+  // VCs and consulting firms are not blockchain infrastructure —
+  // they often mention "infrastructure" when describing their investments or clients
+  if (cats.includes(Category.VC) || cats.includes(Category.CONSULTANCY)) {
+    const infraIdx = cats.indexOf(Category.INFRASTRUCTURE);
+    if (infraIdx !== -1) cats.splice(infraIdx, 1);
+  }
+
   return [...new Set(cats)];
 };
 
@@ -806,7 +813,7 @@ export const enrichCompanyData = async (
       industry,
       region,
       focus,
-      categories: categories.length > 0 ? categories : [Category.INFRASTRUCTURE],
+      categories: categories.length > 0 ? categories : [Category.PAYMENTS],
       partners,
       funding: funding || undefined,
       parentCompany,
@@ -1689,10 +1696,11 @@ export const scanAndFixCentralBanks = async (
       }
     }
 
-    // Banks and Central Banks are NOT blockchain infrastructure — strip Infrastructure
-    if (categories.includes(Category.BANKS) || categories.includes(Category.CENTRAL_BANKS)) {
+    // Banks, Central Banks, VCs, and Consulting firms are NOT blockchain infrastructure
+    const nonInfraCategories = [Category.BANKS, Category.CENTRAL_BANKS, Category.VC, Category.CONSULTANCY];
+    if (nonInfraCategories.some(cat => categories.includes(cat))) {
       if (categories.includes(Category.INFRASTRUCTURE)) {
-        logger.info('general', `Removing "Infrastructure" tag from "${c.name}" — banks are not infrastructure`);
+        logger.info('general', `Removing "Infrastructure" tag from "${c.name}" — not blockchain infrastructure`);
         categories = categories.filter(cat => cat !== Category.INFRASTRUCTURE);
         changed = true;
       }
