@@ -245,6 +245,66 @@ const extractFundingFromText = (text: string): {
   };
 };
 
+// Build a concise partnership description from the snippet context around a regex match
+const buildPartnerDescription = (snippet: string, partnerName: string, companyName: string): string => {
+  // Try to extract a meaningful phrase describing the partnership nature
+  const lower = snippet.toLowerCase();
+
+  // Look for purpose patterns: "to <do something>", "for <something>", "on <something>"
+  const purposePatterns = [
+    /(?:partner(?:ship|ed|s)?|collaborat(?:es?|ion|ing)|integrat(?:es?|ion|ing)|teamed up)[^.]*?\s+(to [^,.]{10,80})/i,
+    /(?:partner(?:ship|ed|s)?|collaborat(?:es?|ion|ing)|integrat(?:es?|ion|ing)|teamed up)[^.]*?\s+(for [^,.]{10,80})/i,
+    /(?:partner(?:ship|ed|s)?|collaborat(?:es?|ion|ing)|integrat(?:es?|ion|ing)|teamed up)[^.]*?\s+(on [^,.]{10,80})/i,
+  ];
+
+  for (const p of purposePatterns) {
+    const m = snippet.match(p);
+    if (m) {
+      const purpose = m[1].trim().replace(/\s+/g, ' ');
+      return `Partnership ${purpose}`;
+    }
+  }
+
+  // Look for keyword-based relationship type
+  const relationshipKeywords: [RegExp, string][] = [
+    [/integrat/i, 'Integration partnership'],
+    [/collaborat/i, 'Collaboration'],
+    [/invest/i, 'Investment partnership'],
+    [/custod/i, 'Custody partnership'],
+    [/payment/i, 'Payments partnership'],
+    [/tokeniz/i, 'Tokenization partnership'],
+    [/stablecoin/i, 'Stablecoin partnership'],
+    [/compliance|regul/i, 'Compliance partnership'],
+    [/infrastruc/i, 'Infrastructure partnership'],
+    [/defi|decentralized finance/i, 'DeFi partnership'],
+    [/wallet/i, 'Wallet integration partnership'],
+    [/cross-chain|bridge|interoperab/i, 'Interoperability partnership'],
+    [/layer[- ]?[12]/i, 'Blockchain infrastructure partnership'],
+  ];
+
+  for (const [re, label] of relationshipKeywords) {
+    if (re.test(lower)) {
+      return label;
+    }
+  }
+
+  // Fallback: use the sentence containing the partnership mention as description
+  const sentences = snippet.split(/(?<=[.!?])\s+/);
+  for (const s of sentences) {
+    const sl = s.toLowerCase();
+    if (
+      (sl.includes(partnerName.toLowerCase()) || sl.includes(companyName.toLowerCase())) &&
+      (sl.includes('partner') || sl.includes('collaborat') || sl.includes('integrat') || sl.includes('teamed'))
+    ) {
+      const cleaned = s.trim().replace(/\s+/g, ' ');
+      if (cleaned.length <= 200) return cleaned;
+      return cleaned.substring(0, 197) + '...';
+    }
+  }
+
+  return `Partnership between ${companyName} and ${partnerName}`;
+};
+
 // Extract partner references from text
 const extractPartnersFromSearch = (results: SearchResult[], companyName: string): Partner[] => {
   const partners: Partner[] = [];
@@ -256,26 +316,31 @@ const extractPartnersFromSearch = (results: SearchResult[], companyName: string)
     /([A-Z][A-Za-z0-9&\s]+?) (?:partner(?:ship|ed|s)?|collaborat(?:es?|ion)|integrat(?:es?|ion)) with/g,
   ];
 
-  const allText = results.map(r => `${r.title} ${r.snippet}`).join('\n');
-
-  for (const pattern of partnerPatterns) {
-    let match;
-    while ((match = pattern.exec(allText)) !== null) {
-      const name = match[1].trim().replace(/\s+/g, ' ');
-      const nameLower = name.toLowerCase();
-      if (
-        name.length > 2 &&
-        name.length < 50 &&
-        !seen.has(nameLower) &&
-        nameLower !== companyLower &&
-        !/^(the|a|an|this|that|their|its|our|new|more|also)$/i.test(name)
-      ) {
-        seen.add(nameLower);
-        partners.push({
-          name,
-          type: 'CryptoNative',
-          description: `Partnership identified via web search`,
-        });
+  // Search each result individually so we can extract context for descriptions
+  for (const result of results) {
+    const text = `${result.title} ${result.snippet}`;
+    for (const pattern of partnerPatterns) {
+      // Reset lastIndex since we reuse patterns across results
+      pattern.lastIndex = 0;
+      let match;
+      while ((match = pattern.exec(text)) !== null) {
+        const name = match[1].trim().replace(/\s+/g, ' ');
+        const nameLower = name.toLowerCase();
+        if (
+          name.length > 2 &&
+          name.length < 50 &&
+          !seen.has(nameLower) &&
+          nameLower !== companyLower &&
+          !/^(the|a|an|this|that|their|its|our|new|more|also)$/i.test(name)
+        ) {
+          seen.add(nameLower);
+          const description = buildPartnerDescription(result.snippet, name, companyName);
+          partners.push({
+            name,
+            type: 'CryptoNative',
+            description,
+          });
+        }
       }
     }
   }
