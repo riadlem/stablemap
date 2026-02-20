@@ -377,17 +377,26 @@ const extractPartnersFromSearch = (results: SearchResult[], companyName: string)
           .replace(/\s+(?:to\s+(?:provide|build|develop|enable|create|launch|offer|deliver|support|integrate|power|expand).*)$/i, '')
           .replace(/\s+(?:for\s+(?:its|the|their|a|an)\b.*)$/i, '')
           .replace(/\s+(?:in\s+(?:a|the|its|their|this)\b.*)$/i, '')
+          // Strip verb phrases: "X announced a strategic" -> "X"
+          .replace(/\s+(?:announced|entered|signed|formed|established|unveiled|confirmed|completed|finalized|launched|revealed)\b.*/i, '')
+          // Strip leading/trailing common words that aren't part of company names
+          .replace(/\s+(?:a|an|the|and|or|with|from|into|on|at)\s*$/i, '')
           .trim();
 
         const nameLower = name.toLowerCase();
+        // Reject self-references: exact match OR one contains the other
+        const isSelf = nameLower === companyLower ||
+          companyLower.includes(nameLower) ||
+          nameLower.includes(companyLower);
+
         if (
           name.length > 2 &&
           name.length < 50 &&
           !seen.has(nameLower) &&
-          nameLower !== companyLower &&
+          !isSelf &&
           !/^(the|a|an|this|that|their|its|our|new|more|also)$/i.test(name) &&
           // Reject names that are clearly sentence fragments, not company names
-          !/\b(as a|as the|as an|will be|has been|have been)\b/i.test(name)
+          !/\b(as a|as the|as an|will be|has been|have been|announced|entered|signed)\b/i.test(name)
         ) {
           seen.add(nameLower);
           const description = buildPartnerDescription(result.snippet, name, companyName);
@@ -571,11 +580,17 @@ export const enrichCompanyData = async (
             if (rawType.includes('fortune') || rawType.includes('500') || rawType.includes('global') || rawType.includes('traditional')) pType = 'Fortune500Global';
             else if (rawType.includes('investor') || rawType.includes('backer') || rawType.includes('vc')) pType = 'Investor';
 
+            const pNameLower = pName.toLowerCase();
+            const cLower = companyName.toLowerCase();
+            const isSelfRef = pNameLower === cLower ||
+              cLower.includes(pNameLower) ||
+              pNameLower.includes(cLower);
+
             if (
               pName.length > 1 &&
               pName.length < 60 &&
-              pName.toLowerCase() !== companyName.toLowerCase() &&
-              !/\b(as a|as the|will be|has been)\b/i.test(pName)
+              !isSelfRef &&
+              !/\b(as a|as the|will be|has been|announced|entered|signed)\b/i.test(pName)
             ) {
               aiPartners.push({ name: pName, type: pType, description: pDesc });
             }
