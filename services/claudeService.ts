@@ -28,7 +28,25 @@ export const getCurrentModelName = (): string => {
 
 // --- CORE API CALL (via server-side proxy, with provider rotation) ---
 
-const ROTATABLE_STATUS_CODES = new Set([429, 500, 502, 503, 529]);
+const ROTATABLE_STATUS_CODES = new Set([429, 500, 501, 502, 503, 529]);
+
+// Error messages that indicate the provider is unusable (billing, quota, disabled)
+// even when the HTTP status is 400/401/403.  These should trigger rotation.
+const PROVIDER_UNUSABLE_PATTERNS = [
+  'credit balance',
+  'insufficient_quota',
+  'billing',
+  'exceeded your current quota',
+  'account is not active',
+  'api key is disabled',
+  'rate limit',
+  'plan does not allow',
+];
+
+const isProviderUnusable = (errText: string): boolean => {
+  const lower = errText.toLowerCase();
+  return PROVIDER_UNUSABLE_PATTERNS.some(p => lower.includes(p));
+};
 
 const callAI = async (
   prompt: string,
@@ -59,14 +77,14 @@ const callAI = async (
         const errText = await response.text();
         logger.error('ai', `${model.displayName} API error ${response.status}`, errText);
 
-        // Rotate to next provider on overload / server errors
-        if (ROTATABLE_STATUS_CODES.has(response.status)) {
+        // Rotate on overload / server errors OR billing / quota errors
+        if (ROTATABLE_STATUS_CODES.has(response.status) || isProviderUnusable(errText)) {
           lastError = new Error(`${model.displayName} ${response.status}: ${errText}`);
           rotateModel();
           continue;
         }
 
-        // Non-rotatable errors (400, 401, 403) — bail immediately
+        // Genuine bad-request errors (malformed prompt etc.) — bail immediately
         throw new Error(`API Error ${response.status}: ${errText}`);
       }
 
