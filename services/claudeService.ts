@@ -276,16 +276,30 @@ const extractLocationFromText = (text: string): {
   region: 'North America' | 'EU' | 'Europe' | 'APAC' | 'LATAM' | 'MEA' | 'Global';
 } => {
   const hqPatterns = [
-    /headquartered in ([^,.;]+(?:, [^,.;]+)?)/i,
-    /based in ([^,.;]+(?:, [^,.;]+)?)/i,
-    /headquarters? (?:is |are )?(?:in |at )?([^,.;]+(?:, [^,.;]+)?)/i,
+    // "headquartered in City" or "headquartered in City, Country"
+    /headquartered in ([A-Z][A-Za-z\s.''-]{1,25}(?:,\s*[A-Z][A-Za-z\s.''-]{1,25})?)/i,
+    // "based in City" or "based in City, Country"
+    /based in ([A-Z][A-Za-z\s.''-]{1,25}(?:,\s*[A-Z][A-Za-z\s.''-]{1,25})?)/i,
+    // "headquarters in City"
+    /headquarters? (?:is |are )?(?:in |at )([A-Z][A-Za-z\s.''-]{1,25}(?:,\s*[A-Z][A-Za-z\s.''-]{1,25})?)/i,
+    // "City-based company"
     /([A-Z][a-z]+(?:[\s,]+[A-Z][a-z]+){0,2})-based company/,
   ];
 
   let headquarters = '';
   for (const p of hqPatterns) {
     const m = text.match(p);
-    if (m) { headquarters = m[1].trim(); break; }
+    if (m) {
+      headquarters = m[1].trim();
+      // Sanitize: strip trailing noise — location should be short and only contain place names
+      // Remove anything after common sentence-continuation words
+      headquarters = headquarters.replace(/\s*(?:,\s*)?(?:the|a|an|it|which|that|and|with|is|are|was|has|its|known|offering|providing|specializing|focused|serving)\b.*$/i, '').trim();
+      // Remove trailing punctuation
+      headquarters = headquarters.replace(/[,;:.]+$/, '').trim();
+      // If result is too long it's probably not a clean location
+      if (headquarters.length > 50) headquarters = headquarters.split(',')[0].trim();
+      break;
+    }
   }
 
   // Country detection
