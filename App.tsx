@@ -72,6 +72,7 @@ const App: React.FC = () => {
 
   // Ensure bidirectional partner relationships:
   // If company A lists company B as partner, company B should also list company A.
+  // A company can have multiple relationship types (e.g. Visa is both partner & investor in BVNK).
   const ensureBidirectionalPartners = (allCompanies: Company[]): Company[] => {
     const compMap = new Map<string, Company>(allCompanies.map(c => [c.id, { ...c }]));
 
@@ -81,25 +82,25 @@ const App: React.FC = () => {
         const partnerCompany = compMap.get(partnerId);
         if (!partnerCompany) continue; // partner not in directory
 
-        const alreadyLinked = partnerCompany.partners.some(
-          p => p.name.toLowerCase() === company.name.toLowerCase()
-        );
-        if (!alreadyLinked) {
-          // Determine reverse partner type
-          let reverseType: Partner['type'] = 'CryptoNative';
-          if (partner.type === 'Investor') {
-            // If A lists B as Investor, B should list A as CryptoNative (portfolio company)
-            reverseType = 'CryptoNative';
-          } else if (partner.type === 'Fortune500Global') {
-            reverseType = 'CryptoNative';
-          } else {
-            // Both are crypto-native peers, or determine from the company's own focus
-            reverseType = company.focus === 'Crypto-Second' ? 'Fortune500Global' : 'CryptoNative';
-          }
+        // Determine reverse partner type
+        let reverseType: Partner['type'] = 'CryptoNative';
+        if (partner.type === 'Investor') {
+          // If A lists B as Investor, B should list A as CryptoNative (portfolio company)
+          reverseType = 'CryptoNative';
+        } else if (partner.type === 'Fortune500Global') {
+          reverseType = 'CryptoNative';
+        } else {
+          reverseType = company.focus === 'Crypto-Second' ? 'Fortune500Global' : 'CryptoNative';
+        }
 
+        // Check by name+type (allows same company with different types)
+        const alreadyLinkedWithType = partnerCompany.partners.some(
+          p => p.name.toLowerCase() === company.name.toLowerCase() && p.type === reverseType
+        );
+        if (!alreadyLinkedWithType) {
           compMap.set(partnerId, {
             ...partnerCompany,
-            partners: [...partnerCompany.partners, {
+            partners: [...compMap.get(partnerId)!.partners, {
               name: company.name,
               type: reverseType,
               description: partner.description || `Partnership with ${company.name}.`,
@@ -266,7 +267,7 @@ const App: React.FC = () => {
                       const id2 = generateCompanyId(rel.company2);
                       const c1 = compMap.get(id1);
                       const c2 = compMap.get(id2);
-                      if (c1 && !c1.partners.some(p => p.name.toLowerCase() === rel.company2.toLowerCase())) {
+                      if (c1 && !c1.partners.some(p => p.name.toLowerCase() === rel.company2.toLowerCase() && p.type === rel.company2PartnerType)) {
                           compMap.set(id1, {
                               ...c1,
                               partners: [...c1.partners, {
@@ -278,7 +279,7 @@ const App: React.FC = () => {
                               }]
                           });
                       }
-                      if (c2 && !c2.partners.some(p => p.name.toLowerCase() === rel.company1.toLowerCase())) {
+                      if (c2 && !c2.partners.some(p => p.name.toLowerCase() === rel.company1.toLowerCase() && p.type === rel.company1PartnerType)) {
                           compMap.set(id2, {
                               ...c2,
                               partners: [...c2.partners, {
@@ -594,10 +595,10 @@ const App: React.FC = () => {
           }
           mergedCount++;
           const best = group.reduce((a, b) => dataScore(a) >= dataScore(b) ? a : b);
-          // Deduplicate partners by lowercase name
+          // Deduplicate partners by lowercase name + type (same company can have multiple types)
           const seenPartners = new Set<string>();
           const allPartners = group.flatMap(c => c.partners || []).filter(p => {
-              const key = p.name.toLowerCase();
+              const key = `${p.name.toLowerCase()}::${p.type}`;
               if (seenPartners.has(key)) return false;
               seenPartners.add(key);
               return true;

@@ -228,15 +228,20 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
       setIsEditingName(false);
   };
 
-  // Partner add/remove handlers
-  const handleRemovePartner = async (partnerName: string) => {
-    const updatedPartners = company.partners.filter(p => p.name !== partnerName);
+  // Partner add/remove handlers (type-specific: same company can be both partner & investor)
+  const handleRemovePartner = async (partnerName: string, partnerType: Partner['type']) => {
+    const updatedPartners = company.partners.filter(
+      p => !(p.name === partnerName && p.type === partnerType)
+    );
     await onUpdateCompany({ ...company, partners: updatedPartners });
   };
 
   const handleAddPartner = async (name: string, type: Partner['type']) => {
     if (!name.trim()) return;
-    const already = company.partners.some(p => p.name.toLowerCase() === name.trim().toLowerCase());
+    // Allow same name with different type (e.g. Visa as both Fortune500Global and Investor)
+    const already = company.partners.some(
+      p => p.name.toLowerCase() === name.trim().toLowerCase() && p.type === type
+    );
     if (already) return;
     const newPartner: Partner = {
       name: name.trim(),
@@ -250,14 +255,18 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
   };
 
   const partnerSuggestions = useMemo(() => {
-    if (!partnerSearchTerm.trim() || !allCompanyNames) return [];
+    if (!partnerSearchTerm.trim() || !allCompanyNames || !addingPartnerSection) return [];
     const q = partnerSearchTerm.toLowerCase();
-    const existingNames = new Set(company.partners.map(p => p.name.toLowerCase()));
-    existingNames.add(company.name.toLowerCase());
+    const typeForSection = addingPartnerSection === 'enterprise' ? 'Fortune500Global' : addingPartnerSection === 'crypto' ? 'CryptoNative' : 'Investor';
+    // Only exclude names that already have THIS type (same company can be partner + investor)
+    const existingForType = new Set(
+      company.partners.filter(p => p.type === typeForSection).map(p => p.name.toLowerCase())
+    );
+    existingForType.add(company.name.toLowerCase());
     return allCompanyNames
-      .filter(n => n.toLowerCase().includes(q) && !existingNames.has(n.toLowerCase()))
+      .filter(n => n.toLowerCase().includes(q) && !existingForType.has(n.toLowerCase()))
       .slice(0, 8);
-  }, [partnerSearchTerm, allCompanyNames, company.partners, company.name]);
+  }, [partnerSearchTerm, allCompanyNames, company.partners, company.name, addingPartnerSection]);
 
   // Filter partners by type - Merged Enterprise
   const enterprisePartners = company.partners.filter(p =>
@@ -537,7 +546,7 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
                     {investorPartners.map((p, idx) => (
                       <div key={idx} className="bg-white border border-amber-200 rounded-lg px-3 py-2 shadow-sm min-w-[160px] group/card relative">
                         <button
-                          onClick={() => handleRemovePartner(p.name)}
+                          onClick={() => handleRemovePartner(p.name, p.type)}
                           className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-100 text-red-500 rounded-full flex items-center justify-center opacity-0 group-hover/card:opacity-100 transition-opacity hover:bg-red-200"
                           title="Remove investor"
                         >
@@ -584,7 +593,7 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
                     return (
                       <li key={idx} className="bg-white p-3 rounded-lg border border-slate-200 shadow-sm group/card relative">
                         <button
-                          onClick={() => handleRemovePartner(p.name)}
+                          onClick={() => handleRemovePartner(p.name, p.type)}
                           className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-100 text-red-500 rounded-full flex items-center justify-center opacity-0 group-hover/card:opacity-100 transition-opacity hover:bg-red-200"
                           title="Remove partner"
                         >
@@ -651,7 +660,7 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
                     return (
                       <li key={idx} className="bg-white p-3 rounded-lg border border-slate-200 shadow-sm group/card relative">
                         <button
-                          onClick={() => handleRemovePartner(p.name)}
+                          onClick={() => handleRemovePartner(p.name, p.type)}
                           className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-100 text-red-500 rounded-full flex items-center justify-center opacity-0 group-hover/card:opacity-100 transition-opacity hover:bg-red-200"
                           title="Remove partner"
                         >
