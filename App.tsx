@@ -115,6 +115,32 @@ const App: React.FC = () => {
     return Array.from(compMap.values());
   };
 
+  // Ensure every entry in funding.investors also exists as a Partner with type 'Investor'.
+  // This keeps the Investors page and Company Detail page in sync.
+  const syncFundingInvestorsToPartners = (company: Company): Company => {
+    const fundingInvestors = company.funding?.investors ?? [];
+    if (fundingInvestors.length === 0) return company;
+
+    const existingInvestorNames = new Set(
+      company.partners.filter(p => p.type === 'Investor').map(p => p.name.toLowerCase())
+    );
+
+    const newPartners: Partner[] = [];
+    for (const investorName of fundingInvestors) {
+      const trimmed = investorName.trim();
+      if (!trimmed || existingInvestorNames.has(trimmed.toLowerCase())) continue;
+      existingInvestorNames.add(trimmed.toLowerCase());
+      newPartners.push({
+        name: trimmed,
+        type: 'Investor',
+        description: `Investor in ${company.name}.`,
+      });
+    }
+
+    if (newPartners.length === 0) return company;
+    return { ...company, partners: [...company.partners, ...newPartners] };
+  };
+
   const syncPartnershipsToNews = async (companyName: string, partners: Partner[]) => {
     const newsItems: NewsItem[] = partners.map((p, idx) => {
         const safeName = companyName.replace(/[^a-zA-Z0-9]/g, '');
@@ -140,7 +166,12 @@ const App: React.FC = () => {
         const lastTime = await db.getLastScanTime();
         setLastScanTime(lastTime);
         const storedCompanies = await db.getCompanies();
-        setCompanies(storedCompanies);
+        // Normalize: ensure funding.investors are reflected as Partner entries
+        let normalized = storedCompanies.map(syncFundingInvestorsToPartners);
+        normalized = ensureBidirectionalPartners(normalized);
+        const changed = JSON.stringify(normalized) !== JSON.stringify(storedCompanies);
+        setCompanies(normalized);
+        if (changed) db.saveCompanies(normalized).catch(console.error);
         setIsAppLoading(false);
         const now = Date.now();
         if (now - lastTime > SCAN_INTERVAL_MS) runBackgroundScan(storedCompanies);
@@ -348,7 +379,10 @@ const App: React.FC = () => {
         const finalDescription = enriched.description || 'Basic profile created. Intelligence analysis currently unavailable due to system load.';
 
         setCompanies(current => {
-           const withEnriched = current.map(c => c.id === newId ? { ...c, ...enriched, description: finalDescription, logoPlaceholder: logoUrl } : c);
+           const withEnriched = current.map(c => {
+             if (c.id !== newId) return c;
+             return syncFundingInvestorsToPartners({ ...c, ...enriched, description: finalDescription, logoPlaceholder: logoUrl });
+           });
            const updated = ensureBidirectionalPartners(withEnriched);
            db.saveCompanies(updated).catch(console.error);
            return updated;
@@ -434,9 +468,10 @@ const App: React.FC = () => {
       const finalDescription = enriched.description || 'Basic profile created. Intelligence analysis currently unavailable due to system load.';
 
       setCompanies(current => {
-        const withEnriched = current.map(c =>
-          c.id === newId ? { ...c, ...enriched, partners: mergedPartners, description: finalDescription, logoPlaceholder: logoUrl } : c
-        );
+        const withEnriched = current.map(c => {
+          if (c.id !== newId) return c;
+          return syncFundingInvestorsToPartners({ ...c, ...enriched, partners: mergedPartners, description: finalDescription, logoPlaceholder: logoUrl });
+        });
         const updated = ensureBidirectionalPartners(withEnriched);
         db.saveCompanies(updated).catch(console.error);
         return updated;
@@ -483,7 +518,10 @@ const App: React.FC = () => {
           const finalDescription = enriched.description || company.description;
           
           setCompanies(current => {
-            const withEnriched = current.map(c => c.id === company.id ? { ...c, ...enriched, description: finalDescription, logoPlaceholder: logoUrl } : c);
+            const withEnriched = current.map(c => {
+              if (c.id !== company.id) return c;
+              return syncFundingInvestorsToPartners({ ...c, ...enriched, description: finalDescription, logoPlaceholder: logoUrl });
+            });
             const updated = ensureBidirectionalPartners(withEnriched);
             db.saveCompanies(updated).catch(console.error);
             return updated;
@@ -548,7 +586,10 @@ const App: React.FC = () => {
               }
               const finalDescription = enriched.description || 'Intelligence unavailable. Click Refresh to retry.';
               setCompanies(current => {
-                  const withEnriched = current.map(c => c.id === skel.id ? { ...c, ...enriched, description: finalDescription, logoPlaceholder: logoUrl } : c);
+                  const withEnriched = current.map(c => {
+                    if (c.id !== skel.id) return c;
+                    return syncFundingInvestorsToPartners({ ...c, ...enriched, description: finalDescription, logoPlaceholder: logoUrl });
+                  });
                   const updated = ensureBidirectionalPartners(withEnriched);
                   db.saveCompanies(updated).catch(console.error);
                   return updated;
@@ -643,7 +684,7 @@ const App: React.FC = () => {
               const domain = enriched.website.replace(/^https?:\/\//, '').split('/')[0];
               logoUrl = `https://logo.clearbit.com/${domain}`;
           }
-          const refreshedCompany = { ...company, ...enriched, logoPlaceholder: logoUrl };
+          const refreshedCompany = syncFundingInvestorsToPartners({ ...company, ...enriched, logoPlaceholder: logoUrl });
           const newCompanies = companies.map(c => c.id === refreshedCompany.id ? refreshedCompany : c);
           const updated = ensureBidirectionalPartners(newCompanies);
           setCompanies(updated);
