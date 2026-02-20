@@ -342,9 +342,9 @@ const CompanyList: React.FC<CompanyListProps> = ({ companies, onSelectCompany, o
                 try {
                   const result = await onScanCentralBanks();
                   const parts = [];
-                  if (result.fixedCount > 0) parts.push(`Fixed ${result.fixedCount} misclassified`);
+                  if (result.fixedCount > 0) parts.push(`Fixed ${result.fixedCount} categor${result.fixedCount > 1 ? 'ies' : 'y'}`);
                   if (result.addedCount > 0) parts.push(`Added ${result.addedCount} central bank${result.addedCount > 1 ? 's' : ''}`);
-                  setCbScanResult(parts.length > 0 ? parts.join(', ') + '.' : 'All central banks up to date.');
+                  setCbScanResult(parts.length > 0 ? parts.join(', ') + '.' : 'All categories up to date.');
                 } catch (e) {
                   setCbScanResult('Scan failed. Please try again.');
                 } finally {

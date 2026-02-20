@@ -152,12 +152,34 @@ const sanitizeWebsite = (raw: string): string => {
 };
 
 // Detect company categories from text based on keyword matching
-// companyName is optional — when provided, Central Banks check validates the name itself
+// companyName is optional — when provided, used for stricter checks (Central Banks, Banks, blockchain)
 const categorizeFromText = (text: string, companyName?: string): Category[] => {
   const lower = text.toLowerCase();
   const nameLower = (companyName || '').toLowerCase();
   const cats: Category[] = [];
 
+  // --- Detect if this is a blockchain / L1 / L2 protocol ---
+  // Blockchains mention payments, DeFi, wallets, etc. in their ecosystem but
+  // they ARE infrastructure — those other tags should not apply to the chain itself.
+  const isBlockchain =
+    // Name-based: known blockchain naming patterns
+    /\b(?:chain|network|protocol|blockchain|labs)\b/i.test(nameLower) &&
+    /layer[\s-]?[12]|\bl[12]\b|mainnet|consensus|block\s*chain/i.test(lower) ||
+    // Strong text signals: the entity IS a blockchain
+    /(?:is|as)\s+(?:a|an)\s+(?:layer[\s-]?[12]|blockchain|l[12])\b/i.test(lower) ||
+    /\b(?:layer[\s-]?1|layer[\s-]?2|l1|l2)\s+(?:blockchain|network|protocol|chain)\b/i.test(lower) ||
+    /\b(?:evm[\s-]compatible|proof[\s-]of[\s-](?:stake|work)|smart contract platform)\b/i.test(lower);
+
+  if (isBlockchain) {
+    // Blockchains are infrastructure only — don't accumulate other ecosystem tags
+    cats.push(Category.INFRASTRUCTURE);
+    // Still allow Issuer if they issue their own stablecoin (rare but possible)
+    if (/stablecoin.*(?:issuer|issued|issues)|(?:issues?|issued|issuer).*stablecoin/i.test(lower))
+      cats.push(Category.ISSUER);
+    return [...new Set(cats)];
+  }
+
+  // --- Standard categorization for non-blockchain companies ---
   if (/stablecoin|issuer|usdc|usdt|fiat-backed|mint(?:ing)?\b/.test(lower))
     cats.push(Category.ISSUER);
   if (/infrastructure|protocol|layer[\s-]?[12]|node|validator|blockchain platform/.test(lower))
@@ -171,13 +193,11 @@ const categorizeFromText = (text: string, companyName?: string): Category[] => {
   if (/\bcustody\b|safekeeping|digital vault|qualified custodian/.test(lower))
     cats.push(Category.CUSTODY);
 
-  // Central Banks: require strong signals — the company itself must BE a central bank,
-  // not merely mention or partner with one. Check the company name for telltale patterns.
+  // Central Banks: require strong signals — the company itself must BE a central bank
   const isCentralBankByName =
     /central bank|monetary authority|reserve bank|banque centrale|banco central|bank of (?:england|japan|canada|korea|israel|thailand|ghana|jamaica|bahamas|nigeria|india)/i.test(nameLower) ||
     /\b(?:fed(?:eral)?\s+reserve|ecb|bce|pboc|rbi|boj|boe|snb|rba|mas)\b/i.test(nameLower);
   const isCentralBankByText =
-    // The text must describe the entity as a central bank, not just reference one
     /(?:is|as)\s+(?:a|the)\s+central bank/i.test(lower) ||
     /(?:is|as)\s+(?:a|the)\s+monetary authority/i.test(lower) ||
     /(?:country'?s|nation'?s)\s+central bank/i.test(lower);
@@ -188,8 +208,25 @@ const categorizeFromText = (text: string, companyName?: string): Category[] => {
     cats.push(Category.VC);
   if (/consult|advisory|professional services|\bpwc\b|\bdeloitte\b|\bey\b|\baccenture\b|\bmckinsey\b/.test(lower))
     cats.push(Category.CONSULTANCY);
-  if (/\bbank(?:ing)?\b/.test(lower) && !cats.includes(Category.CENTRAL_BANKS))
-    cats.push(Category.BANKS);
+
+  // Banks: require the company name or description to indicate it IS a bank,
+  // not just a fintech that mentions "banking". Fintechs frequently use
+  // "banking", "neobank", "digital banking" but don't hold bank charters.
+  if (!cats.includes(Category.CENTRAL_BANKS)) {
+    const isBankByName =
+      // "Bank" in company name (but not "Bank-grade" or "Banking API" style names)
+      /\bbank\b/i.test(nameLower) && !/\b(?:banking|bankless|databank|bankman)\b/i.test(nameLower) ||
+      // Well-known bank name patterns
+      /\b(?:bancorp|banque|banco|sparkasse|landesbank|kreditanstalt|savings\s+(?:bank|association))\b/i.test(nameLower);
+    const isBankByText =
+      // Text describes the entity AS a bank
+      /(?:is|as)\s+(?:a|an|the)\s+(?:commercial |global |multinational |leading )?bank\b/i.test(lower) ||
+      /\b(?:banking license|bank charter|fdic[\s-]insured|chartered bank|licensed bank|state[\s-]chartered)\b/i.test(lower) ||
+      // Regulated banking entity signals
+      /\b(?:national bank|savings bank|commercial bank|investment bank|custodian bank)\b/i.test(lower);
+    if (isBankByName || isBankByText)
+      cats.push(Category.BANKS);
+  }
 
   return [...new Set(cats)];
 };
@@ -1388,9 +1425,12 @@ export const analyzeNewsRelationships = async (
   return relationships;
 };
 
-// Fix misclassified Central Banks and find real ones via web search.
-// 1. Removes "Central Banks" category from companies whose name doesn't match.
-// 2. Searches the web for actual central banks exploring CBDCs / stablecoins.
+// Fix misclassified categories and find real central banks via web search.
+// 1. Removes "Central Banks" from companies whose name doesn't match.
+// 2. Collapses blockchains to Infrastructure only.
+// 3. Removes "Banks" from fintechs that aren't real banks.
+// 4. Fixes .com.com URLs.
+// 5. Searches the web for actual central banks exploring CBDCs.
 // Returns { fixed: companies with corrected categories, discovered: new central bank entries }
 export const scanAndFixCentralBanks = async (
   companies: Company[]
@@ -1400,19 +1440,82 @@ export const scanAndFixCentralBanks = async (
   const centralBankAbbrevPattern =
     /\b(?:fed(?:eral)?\s+reserve|ecb|bce|pboc|rbi|boj|boe|snb|rba|mas|hkma|bsp|bis)\b/i;
 
-  // Step 1: Fix misclassified companies — remove Central Banks tag if name doesn't match
+  // Blockchain detection: company name + description signals
+  const isBlockchainCompany = (name: string, desc: string): boolean => {
+    const nl = name.toLowerCase();
+    const dl = desc.toLowerCase();
+    const combined = `${nl} ${dl}`;
+    return (
+      (/\b(?:chain|network|protocol|blockchain|labs)\b/.test(nl) &&
+       /layer[\s-]?[12]|\bl[12]\b|mainnet|consensus|block\s*chain/.test(combined)) ||
+      /(?:is|as)\s+(?:a|an)\s+(?:layer[\s-]?[12]|blockchain|l[12])\b/.test(dl) ||
+      /\b(?:layer[\s-]?1|layer[\s-]?2|l1|l2)\s+(?:blockchain|network|protocol|chain)\b/.test(dl) ||
+      /\b(?:evm[\s-]compatible|proof[\s-]of[\s-](?:stake|work)|smart contract platform)\b/.test(dl)
+    );
+  };
+
+  // Real bank detection by name
+  const isRealBankByName = (name: string): boolean => {
+    const nl = name.toLowerCase();
+    return (
+      (/\bbank\b/i.test(nl) && !/\b(?:banking|bankless|databank|bankman)\b/i.test(nl)) ||
+      /\b(?:bancorp|banque|banco|sparkasse|landesbank|kreditanstalt|savings\s+(?:bank|association))\b/i.test(nl)
+    );
+  };
+
+  // Step 1: Fix all category misclassifications
   const fixed = companies.map(c => {
-    if (!c.categories?.includes(Category.CENTRAL_BANKS)) return c;
-    const nameMatches = centralBankNamePattern.test(c.name) || centralBankAbbrevPattern.test(c.name);
-    const descMatches = c.description &&
-      (/(?:is|as)\s+(?:a|the)\s+central bank/i.test(c.description) ||
-       /(?:is|as)\s+(?:a|the)\s+monetary authority/i.test(c.description));
-    if (nameMatches || descMatches) return c; // Correctly classified
-    // Remove the Central Banks tag
-    logger.info('general', `Removing "Central Banks" tag from "${c.name}" — not a central bank`);
-    const newCategories = c.categories.filter(cat => cat !== Category.CENTRAL_BANKS);
-    if (newCategories.length === 0) newCategories.push(Category.INFRASTRUCTURE as any);
-    return { ...c, categories: newCategories };
+    let categories = [...(c.categories || [])];
+    let changed = false;
+
+    // Fix Central Banks
+    if (categories.includes(Category.CENTRAL_BANKS)) {
+      const nameMatches = centralBankNamePattern.test(c.name) || centralBankAbbrevPattern.test(c.name);
+      const descMatches = c.description &&
+        (/(?:is|as)\s+(?:a|the)\s+central bank/i.test(c.description) ||
+         /(?:is|as)\s+(?:a|the)\s+monetary authority/i.test(c.description));
+      if (!nameMatches && !descMatches) {
+        logger.info('general', `Removing "Central Banks" tag from "${c.name}"`);
+        categories = categories.filter(cat => cat !== Category.CENTRAL_BANKS);
+        changed = true;
+      }
+    }
+
+    // Fix blockchains: collapse to Infrastructure only
+    if (isBlockchainCompany(c.name, c.description || '')) {
+      const hadOthers = categories.some(cat =>
+        cat !== Category.INFRASTRUCTURE && cat !== Category.ISSUER
+      );
+      if (hadOthers) {
+        logger.info('general', `Collapsing "${c.name}" to Infrastructure only (blockchain)`);
+        categories = [Category.INFRASTRUCTURE];
+        // Keep Issuer if they actually issue a stablecoin
+        if (c.description && /stablecoin.*(?:issuer|issued|issues)|(?:issues?|issued|issuer).*stablecoin/i.test(c.description)) {
+          categories.push(Category.ISSUER);
+        }
+        changed = true;
+      }
+    }
+
+    // Fix Banks: remove Banks tag from fintechs that aren't real banks
+    if (categories.includes(Category.BANKS) && !categories.includes(Category.CENTRAL_BANKS)) {
+      if (!isRealBankByName(c.name)) {
+        // Check description for real bank signals
+        const dl = (c.description || '').toLowerCase();
+        const isBankByDesc =
+          /(?:is|as)\s+(?:a|an|the)\s+(?:commercial |global |multinational |leading )?bank\b/i.test(dl) ||
+          /\b(?:banking license|bank charter|fdic[\s-]insured|chartered bank|licensed bank)\b/i.test(dl);
+        if (!isBankByDesc) {
+          logger.info('general', `Removing "Banks" tag from "${c.name}" — likely a fintech, not a bank`);
+          categories = categories.filter(cat => cat !== Category.BANKS);
+          changed = true;
+        }
+      }
+    }
+
+    if (!changed) return c;
+    if (categories.length === 0) categories.push(Category.INFRASTRUCTURE);
+    return { ...c, categories };
   });
 
   // Also fix any .com.com URLs while we're at it
