@@ -3,6 +3,10 @@ import React, { useState, useMemo, useRef } from 'react';
 import { Company, Category, CompanyFocus } from '../types';
 import { Building2, Globe, ArrowRight, Tag, MapPin, Search, Sparkles, Upload, FileText, Filter, Plus, X, ScanSearch, Check, LayoutGrid, List, RefreshCcw, GitMerge, ArrowUpDown, ChevronDown, ChevronRight } from 'lucide-react';
 
+// Strip markdown formatting for plain-text previews
+const stripMarkdown = (text: string): string =>
+  text.replace(/\*\*(.+?)\*\*/g, '$1').replace(/\*(.+?)\*/g, '$1').replace(/^[-•*]\s+/gm, '').replace(/\n+/g, ' ');
+
 interface Recommendation {
     name: string;
     reason: string;
@@ -538,7 +542,7 @@ const CompanyList: React.FC<CompanyListProps> = ({ companies, onSelectCompany, o
                   </div>
 
                   <p className="text-slate-600 text-sm mb-4 line-clamp-3 flex-grow leading-relaxed">
-                    {company.description}
+                    {stripMarkdown(company.description)}
                   </p>
 
                   <div className="mt-auto">
@@ -677,7 +681,7 @@ const CompanyList: React.FC<CompanyListProps> = ({ companies, onSelectCompany, o
                                   </button>
                                 )}
                               </div>
-                              <div className="text-[10px] text-slate-500 line-clamp-1">{company.description.substring(0, 50)}...</div>
+                              <div className="text-[10px] text-slate-500 line-clamp-1">{stripMarkdown(company.description).substring(0, 50)}...</div>
                             </div>
                           </div>
                         </td>

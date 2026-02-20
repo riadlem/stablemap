@@ -4,6 +4,9 @@ import { Company, NewsItem, NewsVote, classifyNewsSourceType, NewsSourceType } f
 import { lookupInvestorPortfolio, lookupInvestorPortfolioFromUrl, extractPortfolioFromText, scanInvestorNews, extractUnknownCompanyNames, DiscoveredPortfolioCompany } from '../services/claudeService';
 import { db } from '../services/db';
 
+const stripMarkdown = (text: string): string =>
+  text.replace(/\*\*(.+?)\*\*/g, '$1').replace(/\*(.+?)\*/g, '$1').replace(/^[-•*]\s+/gm, '').replace(/\n+/g, ' ');
+
 interface InvestorsProps {
   companies: Company[];
   onSelectCompany: (company: Company) => void;
@@ -556,7 +559,7 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
       <div className="flex items-start justify-between gap-3 p-3 bg-white rounded-lg border border-amber-200">
         <div className="min-w-0 flex-1">
           <p className="font-semibold text-slate-900 text-sm">{company.name}</p>
-          <p className="text-xs text-slate-500 mt-0.5 leading-snug">{company.description}</p>
+          <p className="text-xs text-slate-500 mt-0.5 leading-snug">{stripMarkdown(company.description)}</p>
           <div className="flex flex-wrap gap-1.5 mt-1.5">
             <span className="text-[10px] font-medium bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded">
               {company.category}

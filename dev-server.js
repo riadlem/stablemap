@@ -128,8 +128,11 @@ async function handleSearch(req, res) {
       return { title, link: uri, snippet, displayLink, formattedUrl: uri };
     });
 
+    // Filter out Vertex AI Search proxy URLs — they are not real source URLs
+    const filtered = results.filter(r => !r.link.includes('vertexaisearch.cloud.google.com'));
+
     // Limit to requested number
-    const limited = results.slice(0, num || 10);
+    const limited = filtered.slice(0, num || 10);
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({

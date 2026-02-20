@@ -8,6 +8,76 @@ import { isJobRecent } from '../constants';
 import AddNewsModal from './AddNewsModal';
 import JobDetailModal from './JobDetailModal';
 
+// Render description text with basic formatting: **bold**, *italic*, bullet points, line breaks
+const FormattedDescription: React.FC<{ text: string }> = ({ text }) => {
+  // Split into lines, preserving structure
+  const lines = text.split(/\n/);
+
+  const formatInline = (line: string): React.ReactNode[] => {
+    // Process **bold** and *italic* markers
+    const parts: React.ReactNode[] = [];
+    const regex = /\*\*(.+?)\*\*|\*(.+?)\*/g;
+    let lastIndex = 0;
+    let match;
+    let key = 0;
+    while ((match = regex.exec(line)) !== null) {
+      if (match.index > lastIndex) {
+        parts.push(line.slice(lastIndex, match.index));
+      }
+      if (match[1]) {
+        parts.push(<strong key={key++}>{match[1]}</strong>);
+      } else if (match[2]) {
+        parts.push(<em key={key++}>{match[2]}</em>);
+      }
+      lastIndex = regex.lastIndex;
+    }
+    if (lastIndex < line.length) {
+      parts.push(line.slice(lastIndex));
+    }
+    return parts.length > 0 ? parts : [line];
+  };
+
+  const elements: React.ReactNode[] = [];
+  let bulletBuffer: string[] = [];
+
+  const flushBullets = () => {
+    if (bulletBuffer.length === 0) return;
+    elements.push(
+      <ul key={`ul-${elements.length}`} className="list-disc list-inside space-y-1 my-1">
+        {bulletBuffer.map((b, i) => (
+          <li key={i}>{formatInline(b)}</li>
+        ))}
+      </ul>
+    );
+    bulletBuffer = [];
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const bulletMatch = line.match(/^\s*[-•*]\s+(.*)/);
+    if (bulletMatch) {
+      bulletBuffer.push(bulletMatch[1]);
+    } else {
+      flushBullets();
+      const trimmed = line.trim();
+      if (trimmed === '') {
+        // Only add spacing between content, not at start/end
+        if (elements.length > 0 && i < lines.length - 1) {
+          elements.push(<br key={`br-${i}`} />);
+        }
+      } else {
+        if (elements.length > 0) {
+          elements.push(<br key={`br-${i}`} />);
+        }
+        elements.push(<span key={`s-${i}`}>{formatInline(trimmed)}</span>);
+      }
+    }
+  }
+  flushBullets();
+
+  return <>{elements}</>;
+};
+
 interface CompanyDetailProps {
   company: Company;
   onBack: () => void;
@@ -460,9 +530,9 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
           </div>
         </div>
         
-        <p className="mt-6 text-slate-600 leading-relaxed max-w-3xl">
-          {company.description}
-        </p>
+        <div className="mt-6 text-slate-600 leading-relaxed max-w-3xl">
+          <FormattedDescription text={company.description} />
+        </div>
       </div>
 
       {/* Tabs */}

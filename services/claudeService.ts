@@ -423,6 +423,7 @@ export const enrichCompanyData = async (
       !r.displayLink.includes('bloomberg') &&
       !r.displayLink.includes('twitter') &&
       !r.displayLink.includes('reddit') &&
+      !r.displayLink.includes('vertexaisearch') &&
       r.title.toLowerCase().includes(companyName.toLowerCase().split(' ')[0])
     );
     const website = websiteResult ? `https://${websiteResult.displayLink}` : '';
