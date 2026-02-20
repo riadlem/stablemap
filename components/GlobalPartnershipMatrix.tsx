@@ -7,6 +7,7 @@ import { Search, Building, Filter, CircleCheck, CircleSlash, ArrowRight, Sparkle
 import { researchCompanyActivity } from "../services/claudeService";
 import { db } from '../services/db';
 import GlobalCompanyDetail from './GlobalCompanyDetail';
+import { getCountryFlagWithEU, extractCountryFromLocation } from '../utils/countryFlags';
 
 interface GlobalPartnershipMatrixProps {
   companies: Company[];
@@ -671,7 +672,7 @@ const GlobalPartnershipMatrix: React.FC<GlobalPartnershipMatrixProps> = ({ compa
                               <div className="flex flex-col gap-0.5">
                                 <div className="text-[10px] text-slate-500 flex items-center gap-1 font-medium">
                                     <Globe size={10} className="text-slate-400" /> {item.employees.toLocaleString()} employees
-                                    {item.hqLocation && <span>• {item.hqLocation}</span>}
+                                    {item.hqLocation && <span>• {(() => { const f = getCountryFlagWithEU(extractCountryFromLocation(item.hqLocation)); return f ? `${f} ` : ''; })()}{item.hqLocation}</span>}
                                 </div>
                                 {item.industry && (
                                   <div className="text-[9px] text-indigo-500 font-bold uppercase tracking-wider">

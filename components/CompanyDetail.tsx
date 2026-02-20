@@ -2,12 +2,13 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Company, Job, Partner, CompanyFocus, NewsItem, NewsVote, classifyNewsSourceType, NewsSourceType } from '../types';
 import { ArrowLeft, Briefcase, Handshake, ExternalLink, Share2, Sparkles, Building, MapPin, Building2, Globe, RefreshCw, Trash2, Edit2, Check, X, Newspaper, Plus, Flag, Ban, DollarSign, TrendingUp, Users, UserPlus, Tag, Search, ThumbsUp, ThumbsDown } from 'lucide-react';
-import { findJobOpenings, scanCompanyNews } from "../services/claudeService";
+import { findJobOpenings, scanCompanyNews, formatFinancialAmount } from "../services/claudeService";
 import { db } from '../services/db';
 import { isJobRecent } from '../constants';
 import AddNewsModal from './AddNewsModal';
 import JobDetailModal from './JobDetailModal';
 import { LOGO_DOMAIN_OVERRIDES } from './GlobalPartnershipMatrix';
+import { getCountryFlag, getCountryFlagWithEU, extractCountryFromLocation, isEUMember } from '../utils/countryFlags';
 
 // Resolve a favicon-friendly domain for a partner/investor name
 const PARTNER_DOMAIN_OVERRIDES: Record<string, string> = {
@@ -545,8 +546,13 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
                    </span>
                  )}
                  {company.country && (
-                   <span className="flex items-center gap-1 bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-xs font-medium">
-                     <Globe size={11} /> {company.country}
+                   <span className="flex items-center gap-1.5 bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-xs font-medium">
+                     {getCountryFlag(company.country) ? (
+                       <span className="text-sm leading-none">{getCountryFlagWithEU(company.country)}</span>
+                     ) : (
+                       <Globe size={11} />
+                     )}
+                     {company.country}
                    </span>
                  )}
                  {company.industry && (
@@ -637,15 +643,21 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
                         </div>
                         
                         {company.funding ? (
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                                 <div>
                                     <div className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Total Raised</div>
-                                    <div className="text-2xl font-bold text-white">{company.funding.totalRaised || "Undisclosed"}</div>
+                                    <div className="text-2xl font-bold text-white">{company.funding.totalRaised ? formatFinancialAmount(company.funding.totalRaised.replace(/^\$/, '')) : "Undisclosed"}</div>
                                 </div>
                                 <div>
-                                    <div className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Latest Valuation</div>
-                                    <div className="text-2xl font-bold text-white">{company.funding.valuation || "Unknown"}</div>
+                                    <div className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Valuation</div>
+                                    <div className="text-2xl font-bold text-white">{company.funding.valuation ? formatFinancialAmount(company.funding.valuation.replace(/^\$/, '')) : "Unknown"}</div>
                                 </div>
+                                {company.funding.lastRound && (
+                                    <div>
+                                        <div className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Last Round</div>
+                                        <div className="text-2xl font-bold text-white">{company.funding.lastRound}</div>
+                                    </div>
+                                )}
                             </div>
                         ) : (
                             <div className="text-slate-400 text-sm italic">

@@ -224,8 +224,19 @@ const categorizeFromText = (text: string, companyName?: string): Category[] => {
       /\b(?:banking license|bank charter|fdic[\s-]insured|chartered bank|licensed bank|state[\s-]chartered)\b/i.test(lower) ||
       // Regulated banking entity signals
       /\b(?:national bank|savings bank|commercial bank|investment bank|custodian bank)\b/i.test(lower);
-    if (isBankByName || isBankByText)
+    if (isBankByName || isBankByText) {
       cats.push(Category.BANKS);
+      // Banks are not blockchain infrastructure — remove Infrastructure if it was
+      // triggered by generic "infrastructure" mentions (e.g. "payment infrastructure")
+      const infraIdx = cats.indexOf(Category.INFRASTRUCTURE);
+      if (infraIdx !== -1) cats.splice(infraIdx, 1);
+    }
+  }
+
+  // Central banks are also not infrastructure
+  if (cats.includes(Category.CENTRAL_BANKS)) {
+    const infraIdx = cats.indexOf(Category.INFRASTRUCTURE);
+    if (infraIdx !== -1) cats.splice(infraIdx, 1);
   }
 
   return [...new Set(cats)];
@@ -333,6 +344,38 @@ const determineIndustry = (text: string): string => {
   return 'Technology';
 };
 
+// Format a raw amount string into standard financial notation ($XXM / $X.XB)
+export const formatFinancialAmount = (raw: string): string => {
+  const cleaned = raw.replace(/,/g, '').trim();
+  // Parse the numeric part and suffix
+  const match = cleaned.match(/^([\d.]+)\s*(million|billion|m|b|k|bn)?$/i);
+  if (!match) return `$${cleaned}`;
+
+  let num = parseFloat(match[1]);
+  const suffix = (match[2] || '').toLowerCase();
+
+  // Normalize to a raw number
+  if (suffix === 'billion' || suffix === 'b' || suffix === 'bn') num *= 1_000_000_000;
+  else if (suffix === 'million' || suffix === 'm') num *= 1_000_000;
+  else if (suffix === 'k') num *= 1_000;
+  // If no suffix and num is large, it's already in raw form (e.g. 450000000)
+
+  // Format into financial shorthand
+  if (num >= 1_000_000_000) {
+    const b = num / 1_000_000_000;
+    return b % 1 === 0 ? `$${b.toFixed(0)}B` : `$${b.toFixed(1).replace(/\.0$/, '')}B`;
+  }
+  if (num >= 1_000_000) {
+    const m = num / 1_000_000;
+    return m % 1 === 0 ? `$${m.toFixed(0)}M` : `$${m.toFixed(1).replace(/\.0$/, '')}M`;
+  }
+  if (num >= 1_000) {
+    const k = num / 1_000;
+    return k % 1 === 0 ? `$${k.toFixed(0)}K` : `$${k.toFixed(1).replace(/\.0$/, '')}K`;
+  }
+  return `$${num}`;
+};
+
 // Extract funding information from text
 const extractFundingFromText = (text: string): {
   totalRaised?: string;
@@ -341,21 +384,16 @@ const extractFundingFromText = (text: string): {
   investors: string[];
   lastRoundDate?: string;
 } | null => {
-  const fundingMatch = text.match(/raised\s+\$?([\d,.]+\s*(?:million|billion|[MBK]))/i);
+  const fundingMatch = text.match(/raised\s+\$?([\d,.]+\s*(?:million|billion|bn|[MBK]))/i);
   const roundMatch = text.match(/Series\s+([A-F])\b/i) || text.match(/(Seed|Pre-Seed|Series [A-F]|IPO)\b/i);
-  const valuationMatch = text.match(/valued?\s+(?:at\s+)?\$?([\d,.]+\s*(?:million|billion|[MBK]))/i);
+  const valuationMatch = text.match(/valued?\s+(?:at\s+)?\$?([\d,.]+\s*(?:million|billion|bn|[MBK]))/i);
 
   if (!fundingMatch && !roundMatch && !valuationMatch) return null;
 
-  const formatAmount = (raw: string): string => {
-    const cleaned = raw.replace(/,/g, '').trim();
-    return `$${cleaned.charAt(0).toUpperCase() + cleaned.slice(1).toLowerCase()}`;
-  };
-
   return {
-    totalRaised: fundingMatch ? formatAmount(fundingMatch[1]) : undefined,
+    totalRaised: fundingMatch ? formatFinancialAmount(fundingMatch[1]) : undefined,
     lastRound: roundMatch ? roundMatch[1] : undefined,
-    valuation: valuationMatch ? formatAmount(valuationMatch[1]) : undefined,
+    valuation: valuationMatch ? formatFinancialAmount(valuationMatch[1]) : undefined,
     investors: [],
   };
 };
@@ -1513,8 +1551,17 @@ export const scanAndFixCentralBanks = async (
       }
     }
 
+    // Banks and Central Banks are NOT blockchain infrastructure — strip Infrastructure
+    if (categories.includes(Category.BANKS) || categories.includes(Category.CENTRAL_BANKS)) {
+      if (categories.includes(Category.INFRASTRUCTURE)) {
+        logger.info('general', `Removing "Infrastructure" tag from "${c.name}" — banks are not infrastructure`);
+        categories = categories.filter(cat => cat !== Category.INFRASTRUCTURE);
+        changed = true;
+      }
+    }
+
     if (!changed) return c;
-    if (categories.length === 0) categories.push(Category.INFRASTRUCTURE);
+    if (categories.length === 0) categories.push(Category.BANKS);
     return { ...c, categories };
   });
 

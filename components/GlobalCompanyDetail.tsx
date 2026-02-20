@@ -4,6 +4,7 @@ import { FortuneGlobal500Company, NewsItem } from '../types';
 import { ArrowLeft, RefreshCw, ExternalLink, Globe, ShieldCheck, Newspaper, Building2, Sparkles, AlertCircle, MapPin, User, Briefcase, Telescope, Plus } from 'lucide-react';
 import { LOGO_DOMAIN_OVERRIDES } from './GlobalPartnershipMatrix';
 import AddNewsModal from './AddNewsModal';
+import { getCountryFlag, getCountryFlagWithEU, extractCountryFromLocation } from '../utils/countryFlags';
 
 interface GlobalCompanyDetailProps {
   company: FortuneGlobal500Company;
@@ -171,11 +172,20 @@ const GlobalCompanyDetail: React.FC<GlobalCompanyDetailProps> = ({ company, onBa
                             <User size={12} className="text-slate-400" /> CEO: {company.ceo}
                         </span>
                     )}
-                    {company.hqLocation && (
-                        <span className="flex items-center gap-1.5 bg-white px-2 py-1 rounded-md border border-slate-200 shadow-sm text-xs">
-                            <MapPin size={12} className="text-slate-400" /> {company.hqLocation}
-                        </span>
-                    )}
+                    {company.hqLocation && (() => {
+                        const country = extractCountryFromLocation(company.hqLocation);
+                        const flag = getCountryFlagWithEU(country);
+                        return (
+                            <span className="flex items-center gap-1.5 bg-white px-2 py-1 rounded-md border border-slate-200 shadow-sm text-xs">
+                                {flag ? (
+                                    <span className="text-sm leading-none">{flag}</span>
+                                ) : (
+                                    <MapPin size={12} className="text-slate-400" />
+                                )}
+                                {company.hqLocation}
+                            </span>
+                        );
+                    })()}
                 </div>
              </div>
           </div>
