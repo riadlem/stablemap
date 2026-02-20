@@ -85,7 +85,7 @@ async function callGoogle(body) {
   const apiKey = process.env.GOOGLE_AI_API_KEY;
   if (!apiKey) return jsonResponse({ error: 'GOOGLE_AI_API_KEY not configured' }, 501);
 
-  const model = body.model || 'gemini-2.0-flash';
+  const model = body.model || 'gemini-2.5-flash';
 
   const geminiBody = {
     contents: body.contents || [

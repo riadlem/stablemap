@@ -27,9 +27,9 @@ export const MODEL_ROSTER: ModelConfig[] = [
     proxyEndpoint: '/api/ai',
   },
   {
-    id: 'gemini-2.0-flash',
+    id: 'gemini-2.5-flash',
     provider: 'google',
-    displayName: 'Gemini 2.0 Flash',
+    displayName: 'Gemini 2.5 Flash',
     maxTokens: 8192,
     proxyEndpoint: '/api/ai',
   },

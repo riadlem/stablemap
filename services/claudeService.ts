@@ -369,14 +369,25 @@ const extractPartnersFromSearch = (results: SearchResult[], companyName: string)
       pattern.lastIndex = 0;
       let match;
       while ((match = pattern.exec(text)) !== null) {
-        const name = match[1].trim().replace(/\s+/g, ' ');
+        let name = match[1].trim().replace(/\s+/g, ' ');
+
+        // Strip trailing noise phrases that leak from regex captures
+        name = name
+          .replace(/\s+(?:as\s+(?:a\s+)?(?:launch|strategic|key|official|founding|anchor|preferred|primary|lead)\s+partner.*)/i, '')
+          .replace(/\s+(?:to\s+(?:provide|build|develop|enable|create|launch|offer|deliver|support|integrate|power|expand).*)$/i, '')
+          .replace(/\s+(?:for\s+(?:its|the|their|a|an)\b.*)$/i, '')
+          .replace(/\s+(?:in\s+(?:a|the|its|their|this)\b.*)$/i, '')
+          .trim();
+
         const nameLower = name.toLowerCase();
         if (
           name.length > 2 &&
           name.length < 50 &&
           !seen.has(nameLower) &&
           nameLower !== companyLower &&
-          !/^(the|a|an|this|that|their|its|our|new|more|also)$/i.test(name)
+          !/^(the|a|an|this|that|their|its|our|new|more|also)$/i.test(name) &&
+          // Reject names that are clearly sentence fragments, not company names
+          !/\b(as a|as the|as an|will be|has been|have been)\b/i.test(name)
         ) {
           seen.add(nameLower);
           const description = buildPartnerDescription(result.snippet, name, companyName);
@@ -478,7 +489,51 @@ export const enrichCompanyData = async (
       const metaPart = parts[1] || '';
 
       // Extract description (strip the "DESCRIPTION:" prefix if present)
-      description = descPart.replace(/^DESCRIPTION:\s*/i, '').trim();
+      let rawDesc = descPart.replace(/^DESCRIPTION:\s*/i, '').trim();
+
+      // --- Post-processing: clean up common AI output issues ---
+      // Strip all markdown formatting (bold, italic, headers)
+      rawDesc = rawDesc.replace(/\*{1,3}([^*]+)\*{1,3}/g, '$1');
+      rawDesc = rawDesc.replace(/^#{1,4}\s+/gm, '');
+
+      // Remove lines mentioning founders/CEOs/executives by name pattern
+      // (e.g. "co-founded by Evan Cheng and Sam Blackshear" or "CEO John Doe")
+      rawDesc = rawDesc
+        .split('\n')
+        .filter(line => !/(?:co-)?found(?:ed|er|ers|ing)\s+(?:by|in\s+\d{4}\s+by)/i.test(line))
+        .filter(line => !/\b(?:CEO|CTO|CFO|COO|founder|co-founder)\s+[A-Z][a-z]+\s+[A-Z]/i.test(line))
+        .join('\n');
+
+      // Deduplicate bullet points that say the same thing
+      const lines = rawDesc.split('\n');
+      const seenBullets = new Set<string>();
+      const dedupedLines: string[] = [];
+      for (const line of lines) {
+        if (line.startsWith('- ')) {
+          // Normalize for comparison: lowercase, strip punctuation
+          const key = line.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
+          if (seenBullets.has(key)) continue;
+          // Also check for high overlap with existing bullets
+          let isDup = false;
+          for (const existing of seenBullets) {
+            const words = key.split(/\s+/);
+            const overlap = words.filter(w => existing.includes(w)).length;
+            if (words.length > 3 && overlap / words.length > 0.7) { isDup = true; break; }
+          }
+          if (isDup) continue;
+          seenBullets.add(key);
+        }
+        dedupedLines.push(line);
+      }
+      description = dedupedLines.join('\n').trim();
+
+      // Strip any trailing truncated sentence (no period at end)
+      const descLines = description.split('\n');
+      const lastLine = descLines[descLines.length - 1];
+      if (lastLine && !lastLine.startsWith('- ') && !lastLine.endsWith('.') && !lastLine.endsWith('?') && lastLine.length > 10) {
+        descLines.pop();
+        description = descLines.join('\n').trim();
+      }
 
       // Extract website
       const websiteMatch = metaPart.match(/WEBSITE:\s*(https?:\/\/[^\s]+)/i);
