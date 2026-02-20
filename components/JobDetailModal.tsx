@@ -10,9 +10,10 @@ interface JobDetailModalProps {
   companyLogo?: string;
   isOpen: boolean;
   onClose: () => void;
+  onUpdateJob?: (job: Job) => void;
 }
 
-const JobDetailModal: React.FC<JobDetailModalProps> = ({ job, companyName, companyLogo, isOpen, onClose }) => {
+const JobDetailModal: React.FC<JobDetailModalProps> = ({ job, companyName, companyLogo, isOpen, onClose, onUpdateJob }) => {
   const [details, setDetails] = useState<Job>(job);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -34,16 +35,19 @@ const JobDetailModal: React.FC<JobDetailModalProps> = ({ job, companyName, compa
       try {
           if (!job.url) throw new Error("No URL available");
           const result = await analyzeJobLink(job.url);
-          
-          setDetails(prev => ({
-              ...prev,
+
+          const enriched: Job = {
+              ...job,
               description: result.description,
               requirements: result.requirements,
-              salary: result.salary || prev.salary,
+              salary: result.salary || job.salary,
               benefits: result.benefits,
-              type: (result.type as any) || prev.type,
-              locations: result.locations.length > 0 ? result.locations : prev.locations
-          }));
+              type: (result.type as any) || job.type,
+              locations: result.locations?.length > 0 ? result.locations : job.locations,
+          };
+          setDetails(enriched);
+          // Persist so the modal doesn't re-fetch on next open
+          onUpdateJob?.(enriched);
       } catch (e) {
           console.error(e);
           setError("Could not load full details. Please check the official link.");

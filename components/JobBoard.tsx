@@ -79,7 +79,7 @@ const JobBoard: React.FC<JobBoardProps> = ({ companies, onUpdateCompanies }) => 
   const [flaggingJobId, setFlaggingJobId] = useState<string | null>(null);
   
   // Detail Modal State
-  const [selectedJob, setSelectedJob] = useState<Job & { companyName: string, companyLogo: string } | null>(null);
+  const [selectedJob, setSelectedJob] = useState<Job & { companyName: string, companyLogo: string, companyId: string } | null>(null);
 
   // Flatten jobs from all companies into a single list with company metadata
   // Also filter out old jobs and HIDDEN jobs
@@ -299,16 +299,31 @@ const JobBoard: React.FC<JobBoardProps> = ({ companies, onUpdateCompanies }) => 
     setNewJobLocations('');
   };
 
+  // Persist enriched job data (description, requirements, etc.) back to company store
+  const handleJobUpdate = async (updatedJob: Job) => {
+    if (!selectedJob) return;
+    const companyId = selectedJob.companyId;
+    const updatedCompanies = companies.map(c => {
+      if (c.id !== companyId) return c;
+      const jobs = (c.jobs || []).map(j => j.id === updatedJob.id ? { ...j, ...updatedJob } : j);
+      return { ...c, jobs };
+    });
+    await onUpdateCompanies(updatedCompanies);
+    // Keep local selectedJob in sync so modal doesn't re-fetch next time
+    setSelectedJob(prev => prev ? { ...prev, ...updatedJob } : prev);
+  };
+
   return (
     <div className="space-y-6 relative">
-      
+
       {selectedJob && (
-          <JobDetailModal 
-            job={selectedJob} 
-            companyName={selectedJob.companyName} 
+          <JobDetailModal
+            job={selectedJob}
+            companyName={selectedJob.companyName}
             companyLogo={selectedJob.companyLogo}
             isOpen={!!selectedJob}
             onClose={() => setSelectedJob(null)}
+            onUpdateJob={handleJobUpdate}
           />
       )}
 

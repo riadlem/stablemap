@@ -796,46 +796,73 @@ export const analyzeJobLink = async (url: string): Promise<any> => {
   }
   if (locations.length === 0) locations.push('Remote');
 
-  // Determine department
-  const lower = content.toLowerCase();
+  // Use AI to extract structured job details from the page content
+  const truncatedContent = content.substring(0, 6000); // keep within prompt limits
+
+  let description = '';
+  let requirements: string[] = [];
+  let benefits: string[] = [];
+  let salary = '';
   let department: 'Strategy' | 'Customer Success' | 'Business Dev' | 'Partnerships' | 'Other' = 'Other';
-  if (/strateg/i.test(lower)) department = 'Strategy';
-  else if (/customer success|support/i.test(lower)) department = 'Customer Success';
-  else if (/business dev|biz dev|sales/i.test(lower)) department = 'Business Dev';
-  else if (/partner/i.test(lower)) department = 'Partnerships';
-
-  // Extract salary
-  const salaryMatch = content.match(/\$[\d,]+\s*[-–]\s*\$[\d,]+/);
-  const salary = salaryMatch ? salaryMatch[0] : '';
-
-  // Extract requirements (lines starting with bullets or dashes under "requirements")
-  const reqSection = content.match(/(?:requirements?|qualifications?|what you.ll need)[\s:]*\n([\s\S]*?)(?:\n\n|\n[A-Z])/i);
-  const requirements = reqSection
-    ? reqSection[1]
-        .split('\n')
-        .map(l => l.replace(/^[\s•\-*]+/, '').trim())
-        .filter(l => l.length > 10)
-        .slice(0, 10)
-    : [];
-
-  // Extract benefits
-  const benSection = content.match(/(?:benefits?|perks?|what we offer)[\s:]*\n([\s\S]*?)(?:\n\n|\n[A-Z])/i);
-  const benefits = benSection
-    ? benSection[1]
-        .split('\n')
-        .map(l => l.replace(/^[\s•\-*]+/, '').trim())
-        .filter(l => l.length > 5)
-        .slice(0, 10)
-    : [];
-
-  // Extract description (first substantial paragraph)
-  const descLines = content.split('\n').filter(l => l.trim().length > 50);
-  const description = descLines.slice(0, 3).join(' ').substring(0, 500);
-
-  // Determine type
   let type: 'Full-time' | 'Contract' | 'Remote' = 'Full-time';
-  if (/contract/i.test(content)) type = 'Contract';
-  else if (/remote/i.test(content)) type = 'Remote';
+
+  try {
+    const aiRaw = await callAI(
+      `Extract structured information from this job posting page content for the role "${jobTitle}".\n\nPage content:\n${truncatedContent}\n\nRespond with EXACTLY this format (sections separated by ---):\n\nDESCRIPTION:\n2-4 sentences describing what this role is about and what the person will do. Write in plain prose, no bullet points. Pull directly from the posting.\n\n---\nREQUIREMENTS:\n- requirement one\n- requirement two\n(list up to 8 key requirements as bullet points)\n\n---\nBENEFITS:\n- benefit one\n- benefit two\n(list up to 6 perks/benefits as bullet points, or write "none" if not mentioned)\n\n---\nMETA:\nDEPARTMENT: one of Strategy / Customer Success / Business Dev / Partnerships / Other\nSALARY: salary range if mentioned, else leave blank\nTYPE: Full-time / Contract / Remote`,
+      'You extract job listing details from raw page content. Output only the requested format.'
+    );
+
+    const parts = aiRaw.split('---').map(s => s.trim());
+    for (const part of parts) {
+      if (/^DESCRIPTION:/im.test(part)) {
+        description = part.replace(/^DESCRIPTION:\s*/i, '').trim();
+      } else if (/^REQUIREMENTS:/im.test(part)) {
+        const lines = part.replace(/^REQUIREMENTS:\s*/i, '').split('\n');
+        requirements = lines
+          .filter(l => l.trim().startsWith('-'))
+          .map(l => l.replace(/^-\s*/, '').trim())
+          .filter(l => l.length > 5)
+          .slice(0, 8);
+      } else if (/^BENEFITS:/im.test(part)) {
+        const benRaw = part.replace(/^BENEFITS:\s*/i, '').trim();
+        if (!/^none$/i.test(benRaw)) {
+          benefits = benRaw.split('\n')
+            .filter(l => l.trim().startsWith('-'))
+            .map(l => l.replace(/^-\s*/, '').trim())
+            .filter(l => l.length > 3)
+            .slice(0, 6);
+        }
+      } else if (/^META:/im.test(part)) {
+        const deptMatch = part.match(/DEPARTMENT:\s*(.+)/i);
+        const salaryMatch = part.match(/SALARY:\s*(.+)/i);
+        const typeMatch = part.match(/TYPE:\s*(.+)/i);
+        if (deptMatch) {
+          const d = deptMatch[1].trim();
+          if (/strategy/i.test(d)) department = 'Strategy';
+          else if (/customer success/i.test(d)) department = 'Customer Success';
+          else if (/business dev/i.test(d)) department = 'Business Dev';
+          else if (/partner/i.test(d)) department = 'Partnerships';
+        }
+        if (salaryMatch && salaryMatch[1].trim().length > 1) salary = salaryMatch[1].trim();
+        if (typeMatch) {
+          const t = typeMatch[1].trim();
+          if (/contract/i.test(t)) type = 'Contract';
+          else if (/remote/i.test(t)) type = 'Remote';
+        }
+      }
+    }
+  } catch (err) {
+    logger.warn('ai', `analyzeJobLink AI extraction failed, falling back to regex`);
+    // Regex fallback for description
+    const descLines = content.split('\n').filter(l => l.trim().length > 50);
+    description = descLines.slice(0, 3).join(' ').substring(0, 500);
+    // Regex for salary
+    const salaryM = content.match(/\$[\d,]+\s*[-–]\s*\$[\d,]+/);
+    if (salaryM) salary = salaryM[0];
+    // Regex for type
+    if (/contract/i.test(content)) type = 'Contract';
+    else if (/remote/i.test(content)) type = 'Remote';
+  }
 
   return {
     companyName,

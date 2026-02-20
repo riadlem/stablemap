@@ -475,12 +475,17 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
       />
 
       {selectedJob && (
-          <JobDetailModal 
-            job={selectedJob} 
-            companyName={company.name} 
+          <JobDetailModal
+            job={selectedJob}
+            companyName={company.name}
             companyLogo={company.logoPlaceholder}
             isOpen={!!selectedJob}
             onClose={() => setSelectedJob(null)}
+            onUpdateJob={async (updatedJob) => {
+              const jobs = (company.jobs || []).map(j => j.id === updatedJob.id ? { ...j, ...updatedJob } : j);
+              await onUpdateCompany({ ...company, jobs });
+              setSelectedJob(updatedJob);
+            }}
           />
       )}
 
