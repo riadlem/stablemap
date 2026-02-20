@@ -109,10 +109,34 @@ async function handleSearch(req, res) {
     const chunks = metadata?.groundingChunks || [];
     const supports = metadata?.groundingSupports || [];
 
+    // Try to extract real URLs from searchEntryPoint rendered HTML
+    const renderedHtml = metadata?.searchEntryPoint?.renderedContent || '';
+    const realUrls = [];
+    const hrefRegex = /href="(https?:\/\/[^"]+)"/g;
+    let hrefMatch;
+    while ((hrefMatch = hrefRegex.exec(renderedHtml)) !== null) {
+      try {
+        const url = new URL(hrefMatch[1]);
+        if (!url.hostname.includes('vertexaisearch') && !url.hostname.includes('google.com')) {
+          realUrls.push(hrefMatch[1]);
+        }
+      } catch {}
+    }
+
     // Build search results from grounding metadata
     const results = chunks.map((chunk, idx) => {
-      const uri = chunk.web?.uri || '';
+      let uri = chunk.web?.uri || '';
       const title = chunk.web?.title || '';
+      const isProxy = uri.includes('vertexaisearch.cloud.google.com');
+
+      // If the URI is a vertexaisearch proxy, try to match a real URL by title keywords
+      if (isProxy && realUrls.length > 0) {
+        const titleLower = title.toLowerCase();
+        const match = realUrls.find(u => {
+          try { return titleLower.includes(new URL(u).hostname.replace('www.', '').split('.')[0]); } catch { return false; }
+        });
+        if (match) uri = match;
+      }
 
       // Gather supporting text segments that reference this chunk
       const snippetParts = supports
@@ -124,15 +148,16 @@ async function handleSearch(req, res) {
 
       let displayLink = '';
       try { displayLink = new URL(uri).hostname; } catch {}
+      // For remaining proxy URLs, derive displayLink from the title instead
+      if (displayLink.includes('vertexaisearch')) {
+        displayLink = title.replace(/\s*[-–|:].*$/, '').trim().toLowerCase().replace(/\s+/g, '') + '.com';
+      }
 
       return { title, link: uri, snippet, displayLink, formattedUrl: uri };
     });
 
-    // Filter out Vertex AI Search proxy URLs — they are not real source URLs
-    const filtered = results.filter(r => !r.link.includes('vertexaisearch.cloud.google.com'));
-
     // Limit to requested number
-    const limited = filtered.slice(0, num || 10);
+    const limited = results.slice(0, num || 10);
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
