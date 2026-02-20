@@ -456,19 +456,40 @@ export const enrichCompanyData = async (
     // Combine all text for analysis
     const allText = results.map(r => `${r.title} ${r.snippet}`).join('\n');
 
-    // Generate a structured description via AI
-    const rawContext = modelSummary || results.slice(0, 5).map(r => `${r.title}: ${r.snippet}`).join('\n');
+    // Generate description + extract website via AI in a single call
+    const searchContext = results.slice(0, 8).map(r =>
+      `[${r.title}] (${r.displayLink}) ${r.snippet}`
+    ).join('\n');
+    const rawContext = modelSummary
+      ? `Summary:\n${modelSummary}\n\nSources:\n${searchContext}`
+      : searchContext;
+
     let description = '';
+    let website = '';
     try {
-      description = await callAI(
-        `Based on this information about "${companyName}":\n\n${rawContext}\n\nWrite a company description. Format:\n- First line: ONE sentence explaining what ${companyName} is and does (core business).\n- Then a blank line, followed by its relevant activities in the stablecoin, digital asset, blockchain, or fintech space as bullet points (use "- " prefix). Each bullet should be a specific activity, product, partnership, or initiative — not generic.\n- Maximum 5 bullet points. Only include bullets you have evidence for.\n- Do NOT use markdown bold (**) or italic (*). Use plain text only.\n- Do NOT include any intro like "Here is" — start directly with the sentence.`,
-        'You are a concise business analyst. Write factual, plain-text company descriptions. No markdown formatting. No filler.'
+      const aiResponse = await callAI(
+        `Based on this information about "${companyName}":\n\n${rawContext}\n\nRespond with EXACTLY this format (two sections separated by "---"):\n\nDESCRIPTION:\nOne sentence about what ${companyName} is (core business, sector, where it is based).\n\n- Bullet point about a specific product, platform, or service\n- Bullet point about a relevant partnership, initiative, or activity\n- Bullet point about another concrete activity or achievement\n\n---\nWEBSITE: https://example.com\n\nRules:\n- Description first line: ONE sentence, what the company does. No founder names, no CEO names, no people.\n- Then bullet points (3-5 max) about concrete activities in stablecoin, digital asset, blockchain, tokenization, or fintech. Each bullet must be unique — no duplicate or overlapping info.\n- Do NOT mention founders, CEOs, executives, or any person by name.\n- Do NOT use markdown bold (**) or italic (*). Plain text only.\n- Do NOT repeat the company name at the start of every bullet.\n- WEBSITE: the company's official homepage URL (not Wikipedia, not Crunchbase, not LinkedIn, not news sites). If unsure, write "unknown".`,
+        'You extract structured company data from search results. No filler, no markdown formatting, no people names.'
       );
+
+      // Parse the AI response
+      const parts = aiResponse.split('---');
+      const descPart = parts[0] || '';
+      const metaPart = parts[1] || '';
+
+      // Extract description (strip the "DESCRIPTION:" prefix if present)
+      description = descPart.replace(/^DESCRIPTION:\s*/i, '').trim();
+
+      // Extract website
+      const websiteMatch = metaPart.match(/WEBSITE:\s*(https?:\/\/[^\s]+)/i);
+      if (websiteMatch && !websiteMatch[1].includes('unknown')) {
+        website = websiteMatch[1].trim();
+      }
     } catch (err) {
       logger.warn('ai', `AI description generation failed for ${companyName}`);
     }
 
-    // Fallback: clean up raw snippets if AI call failed
+    // Fallback description if AI call failed
     if (!description) {
       const descSnippets = results
         .slice(0, 3)
@@ -479,18 +500,18 @@ export const enrichCompanyData = async (
         : `${companyName} operates in the digital asset and blockchain ecosystem.`;
     }
 
-    // Find the company's website (prefer non-Wikipedia, non-aggregator results)
-    const websiteResult = results.find(r =>
-      !r.displayLink.includes('wikipedia') &&
-      !r.displayLink.includes('crunchbase') &&
-      !r.displayLink.includes('linkedin') &&
-      !r.displayLink.includes('bloomberg') &&
-      !r.displayLink.includes('twitter') &&
-      !r.displayLink.includes('reddit') &&
-      !r.displayLink.includes('vertexaisearch') &&
-      r.title.toLowerCase().includes(companyName.toLowerCase().split(' ')[0])
-    );
-    const website = websiteResult ? `https://${websiteResult.displayLink}` : '';
+    // Fallback website: try to find from search results if AI didn't extract one
+    if (!website) {
+      const excluded = ['wikipedia', 'crunchbase', 'linkedin', 'bloomberg', 'twitter', 'reddit', 'vertexaisearch', 'google.com'];
+      const websiteResult = results.find(r =>
+        !excluded.some(ex => r.displayLink.includes(ex)) &&
+        r.title.toLowerCase().includes(companyName.toLowerCase().split(' ')[0])
+      );
+      if (websiteResult) {
+        const domain = websiteResult.displayLink.replace(/^www\./, '');
+        website = domain.includes('vertexaisearch') ? '' : `https://${domain}`;
+      }
+    }
 
     // Determine categories, focus, location, industry
     const categories = categorizeFromText(allText);

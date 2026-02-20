@@ -1,8 +1,9 @@
 
 import { Category, Company } from './types';
 
-// Helper for logos (Clearbit API)
-const getLogo = (domain: string) => `https://logo.clearbit.com/${domain}`;
+// Helper for logos — Google's high-res favicon service (Clearbit is dead)
+const getLogo = (domain: string) =>
+  `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=128`;
 
 // Helper to check if a date is within the last 6 months
 export const isJobRecent = (dateInput: string | any): boolean => {

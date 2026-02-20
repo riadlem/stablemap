@@ -382,7 +382,7 @@ const App: React.FC = () => {
         let logoUrl = skeleton.logoPlaceholder;
         if (enriched.website) {
             const domain = enriched.website.replace(/^https?:\/\//, '').split('/')[0];
-            logoUrl = `https://logo.clearbit.com/${domain}`;
+            logoUrl = `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=128`;
         }
 
         // Handle case where enrichment is empty due to exhaustion
@@ -467,7 +467,7 @@ const App: React.FC = () => {
       let logoUrl = skeleton.logoPlaceholder;
       if (enriched.website) {
         const domain = enriched.website.replace(/^https?:\/\//, '').split('/')[0];
-        logoUrl = `https://logo.clearbit.com/${domain}`;
+        logoUrl = `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=128`;
       }
       const finalDescription = enriched.description || 'Basic profile created. Intelligence analysis currently unavailable due to system load.';
 
@@ -517,9 +517,9 @@ const App: React.FC = () => {
           if (enriched.partners && enriched.partners.length > 0) await syncPartnershipsToNews(company.name, enriched.partners);
           
           let logoUrl = company.logoPlaceholder;
-          if (enriched.website && !company.logoPlaceholder.includes('clearbit')) {
+          if (enriched.website && company.logoPlaceholder.includes('ui-avatars.com')) {
               const domain = enriched.website.replace(/^https?:\/\//, '').split('/')[0];
-              logoUrl = `https://logo.clearbit.com/${domain}`;
+              logoUrl = `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=128`;
           }
 
           const finalDescription = enriched.description || company.description;
@@ -590,7 +590,7 @@ const App: React.FC = () => {
               let logoUrl = skel.logoPlaceholder;
               if (enriched.website) {
                   const domain = enriched.website.replace(/^https?:\/\//, '').split('/')[0];
-                  logoUrl = `https://logo.clearbit.com/${domain}`;
+                  logoUrl = `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=128`;
               }
               const finalDescription = enriched.description || 'Intelligence unavailable. Click Refresh to retry.';
               setCompanies(current => {
@@ -689,9 +689,9 @@ const App: React.FC = () => {
           const enriched = await enrichCompanyData(company.name);
           if (enriched.partners && enriched.partners.length > 0) await syncPartnershipsToNews(company.name, enriched.partners);
           let logoUrl = company.logoPlaceholder;
-          if (enriched.website && !company.logoPlaceholder.includes('clearbit')) {
+          if (enriched.website && company.logoPlaceholder.includes('ui-avatars.com')) {
               const domain = enriched.website.replace(/^https?:\/\//, '').split('/')[0];
-              logoUrl = `https://logo.clearbit.com/${domain}`;
+              logoUrl = `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=128`;
           }
           const mergedPartners = mergePartners(company.partners, enriched.partners);
           const refreshedCompany = syncFundingInvestorsToPartners({ ...company, ...enriched, partners: mergedPartners, logoPlaceholder: logoUrl });

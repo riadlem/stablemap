@@ -446,12 +446,8 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
                   className="w-20 h-20 rounded-xl bg-white border border-slate-200 object-contain p-2 shadow-sm" 
                   onError={(e) => {
                     const target = e.target as HTMLImageElement;
-                    const domain = getDomain();
-                    
-                    // Fallback Chain: Clearbit (Default) -> Google Favicon -> UI Avatar
-                    if (target.src.includes('logo.clearbit.com') && domain) {
-                         target.src = `https://www.google.com/s2/favicons?domain=${domain}&sz=128`;
-                    } else if (target.src.includes('google.com')) {
+                    // Fallback to UI Avatar initials if the favicon/logo fails
+                    if (!target.src.includes('ui-avatars.com')) {
                          target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(company.name)}&background=f8fafc&color=64748b&size=128`;
                     }
                   }}

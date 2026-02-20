@@ -120,12 +120,7 @@ const handleLogoError = (e: React.SyntheticEvent<HTMLImageElement>, name: string
   const domain = website?.replace(/^https?:\/\//, '').split('/')[0];
   const avatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=f8fafc&color=64748b&size=128`;
 
-  if (target.src.includes('logo.clearbit.com')) {
-    // Clearbit failed → try Google Favicon
-    const favDomain = domain || getInvestorLogoDomain(name);
-    target.src = `https://www.google.com/s2/favicons?domain=${favDomain}&sz=128`;
-  } else if (!target.src.includes('ui-avatars.com')) {
-    // Google Favicon (or anything else) failed → fall back to UI Avatar
+  if (!target.src.includes('ui-avatars.com')) {
     target.src = avatarUrl;
   }
 };
@@ -870,7 +865,7 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
                   <div className="flex items-center gap-4">
                     {/* Avatar */}
                     <img
-                      src={`https://logo.clearbit.com/${getInvestorLogoDomain(inv.name)}`}
+                      src={`https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${getInvestorLogoDomain(inv.name)}&size=128`}
                       alt={inv.name}
                       className="w-10 h-10 rounded-lg bg-white border border-slate-200 object-contain p-0.5 shrink-0"
                       onError={(e) => handleLogoError(e, inv.name)}

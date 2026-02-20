@@ -498,10 +498,7 @@ const JobBoard: React.FC<JobBoardProps> = ({ companies, onUpdateCompanies }) => 
                       const target = e.target as HTMLImageElement;
                       const avatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(job.companyName)}&background=f8fafc&color=64748b&size=128`;
                       
-                      if (target.src.includes('logo.clearbit.com') && job.companyWebsite) {
-                           const domain = job.companyWebsite.replace(/^https?:\/\//, '').split('/')[0];
-                           target.src = `https://www.google.com/s2/favicons?domain=${domain}&sz=128`;
-                      } else if (!target.src.includes('ui-avatars.com')) {
+                      if (!target.src.includes('ui-avatars.com')) {
                           target.src = avatarUrl;
                       }
                     }}

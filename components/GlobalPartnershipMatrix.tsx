@@ -652,19 +652,14 @@ const GlobalPartnershipMatrix: React.FC<GlobalPartnershipMatrixProps> = ({ compa
                         <div className="flex items-center gap-3">
                           <div className="w-10 h-10 rounded-lg bg-white border border-slate-200 p-0.5 shadow-sm overflow-hidden flex items-center justify-center">
                               <img 
-                                src={`https://logo.clearbit.com/${logoDomain}`} 
+                                src={`https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${logoDomain}&size=128`} 
                                 alt={item.name}
                                 loading="lazy"
                                 className="w-full h-full object-contain"
                                 onError={(e) => {
                                   const target = e.target as HTMLImageElement;
-                                  const googleFavicon = `https://www.google.com/s2/favicons?domain=${logoDomain}&sz=128`;
-                                  const uiAvatar = `https://ui-avatars.com/api/?name=${encodeURIComponent(item.name)}&background=f8fafc&color=64748b&size=128`;
-                                  
-                                  if (target.src.includes('logo.clearbit.com')) {
-                                      target.src = googleFavicon;
-                                  } else if (target.src.includes('google.com')) {
-                                      target.src = uiAvatar;
+                                  if (!target.src.includes('ui-avatars.com')) {
+                                      target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(item.name)}&background=f8fafc&color=64748b&size=128`;
                                   }
                                 }}
                               />

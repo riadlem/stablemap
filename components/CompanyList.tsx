@@ -511,10 +511,7 @@ const CompanyList: React.FC<CompanyListProps> = ({ companies, onSelectCompany, o
                           const target = e.target as HTMLImageElement;
                           const avatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(company.name)}&background=f8fafc&color=64748b&size=128`;
 
-                          if (target.src.includes('logo.clearbit.com') && company.website) {
-                              const domain = company.website.replace(/^https?:\/\//, '').split('/')[0];
-                              target.src = `https://www.google.com/s2/favicons?domain=${domain}&sz=128`;
-                          } else if (!target.src.includes('ui-avatars.com')) {
+                          if (!target.src.includes('ui-avatars.com')) {
                               target.src = avatarUrl;
                           }
                         }}
@@ -660,10 +657,7 @@ const CompanyList: React.FC<CompanyListProps> = ({ companies, onSelectCompany, o
                               className="w-8 h-8 rounded bg-white border border-slate-200 object-contain p-0.5 shrink-0"
                               onError={(e) => {
                                 const target = e.target as HTMLImageElement;
-                                if (target.src.includes('logo.clearbit.com') && company.website) {
-                                    const domain = company.website.replace(/^https?:\/\//, '').split('/')[0];
-                                    target.src = `https://www.google.com/s2/favicons?domain=${domain}&sz=128`;
-                                } else if (!target.src.includes('ui-avatars.com')) {
+                                if (!target.src.includes('ui-avatars.com')) {
                                     target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(company.name)}&background=f8fafc&color=64748b&size=128`;
                                 }
                               }}

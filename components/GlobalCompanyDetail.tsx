@@ -103,7 +103,7 @@ const GlobalCompanyDetail: React.FC<GlobalCompanyDetailProps> = ({ company, onBa
   };
 
   const domain = getDomain(company);
-  const logoSrc = `https://logo.clearbit.com/${domain}`;
+  const logoSrc = `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=128`;
 
   return (
     <div className="bg-white rounded-xl border border-slate-200 shadow-sm min-h-[80vh] animate-in fade-in slide-in-from-bottom-4 duration-300 relative">
@@ -129,10 +129,7 @@ const GlobalCompanyDetail: React.FC<GlobalCompanyDetailProps> = ({ company, onBa
                     className="w-full h-full object-contain"
                     onError={(e) => {
                         const target = e.target as HTMLImageElement;
-                        // 1. Try Clearbit -> 2. Try Google Favicon -> 3. Fallback to Initials
-                        if (target.src.includes('logo.clearbit.com')) {
-                             target.src = `https://www.google.com/s2/favicons?domain=${domain}&sz=128`;
-                        } else if (target.src.includes('google.com')) {
+                        if (!target.src.includes('ui-avatars.com')) {
                              target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(company.name)}&background=f8fafc&color=64748b&size=128`;
                         }
                     }}

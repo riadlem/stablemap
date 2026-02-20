@@ -274,16 +274,13 @@ const PartnershipMatrix: React.FC<PartnershipMatrixProps> = ({ companies }) => {
                     <td className="p-4">
                       <div className="flex items-center gap-3">
                          <img 
-                           src={`https://logo.clearbit.com/${item.website}`} 
+                           src={`https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${item.website}&size=128`} 
                            alt={item.name}
                            loading="lazy"
                            className="w-10 h-10 rounded-lg bg-white border border-slate-200 object-contain p-0.5"
                            onError={(e) => {
                              const target = e.target as HTMLImageElement;
-                             const googleFavicon = `https://www.google.com/s2/favicons?domain=${item.website}&sz=128`;
-                             if (target.src !== googleFavicon) {
-                                target.src = googleFavicon;
-                             } else {
+                             if (!target.src.includes('ui-avatars.com')) {
                                 target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(item.name)}&background=f8fafc&color=64748b&size=128`;
                              }
                            }}
