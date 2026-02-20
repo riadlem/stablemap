@@ -1,5 +1,6 @@
-// Vercel Serverless Function — proxies requests to Google Custom Search JSON API
-// GOOGLE_AI_API_KEY and GOOGLE_CSE_ID are stored as Vercel environment variables (never exposed to the browser)
+// Vercel Serverless Function — Google Web Search via Gemini API with google_search grounding
+// Uses GOOGLE_AI_API_KEY only — no CSE ID required, searches the entire web
+// Returns real search results with URLs, titles, and snippets from grounding metadata
 
 export const config = {
   runtime: 'edge',
@@ -13,85 +14,121 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'Content-Type',
 };
 
+function jsonResponse(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
+}
+
 export default async function handler(req) {
   if (req.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers: corsHeaders });
   }
 
   if (req.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
-      status: 405,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return jsonResponse({ error: 'Method not allowed' }, 405);
   }
 
   const apiKey = process.env.GOOGLE_AI_API_KEY;
-  const cseId = process.env.GOOGLE_CSE_ID;
 
-  if (!apiKey || !cseId) {
-    return new Response(
-      JSON.stringify({ error: 'GOOGLE_AI_API_KEY or GOOGLE_CSE_ID not configured' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+  if (!apiKey) {
+    return jsonResponse({ error: 'GOOGLE_AI_API_KEY not configured' }, 500);
   }
 
   try {
-    const { query, num, dateRestrict, siteSearch, start, sort } = await req.json();
+    const { query, num, dateRestrict } = await req.json();
 
     if (!query || typeof query !== 'string') {
-      return new Response(
-        JSON.stringify({ error: 'Query parameter required' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return jsonResponse({ error: 'Query parameter required' }, 400);
     }
 
-    const params = new URLSearchParams({
-      key: apiKey,
-      cx: cseId,
-      q: query,
-      num: String(Math.min(num || 10, 10)),
-    });
+    // Build a natural-language search prompt with optional time constraint
+    let searchPrompt = query;
+    if (dateRestrict) {
+      const timeMap = {
+        'd1': 'from the past day',
+        'd7': 'from the past week',
+        'w2': 'from the past 2 weeks',
+        'm1': 'from the past month',
+        'm3': 'from the past 3 months',
+        'y1': 'from the past year',
+      };
+      const timeRange = timeMap[dateRestrict] || '';
+      if (timeRange) searchPrompt += ` ${timeRange}`;
+    }
 
-    if (dateRestrict) params.set('dateRestrict', dateRestrict);
-    if (siteSearch) params.set('siteSearch', siteSearch);
-    if (start) params.set('start', String(start));
-    if (sort) params.set('sort', sort);
-
+    // Call Gemini API with google_search grounding tool
     const response = await fetch(
-      `https://www.googleapis.com/customsearch/v1?${params.toString()}`
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: searchPrompt }],
+            },
+          ],
+          tools: [{ google_search: {} }],
+        }),
+      }
     );
 
     const data = await response.json();
 
     if (!response.ok) {
-      return new Response(
-        JSON.stringify({
-          error: 'Google Search API error',
+      return jsonResponse(
+        {
+          error: 'Google Web Search API error',
           detail: data.error?.message || JSON.stringify(data),
-        }),
-        { status: response.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        },
+        response.status
       );
     }
 
-    const results = (data.items || []).map((item) => ({
-      title: item.title || '',
-      link: item.link || '',
-      snippet: item.snippet || '',
-      displayLink: item.displayLink || '',
-      formattedUrl: item.formattedUrl || '',
-    }));
+    const candidate = data.candidates?.[0];
+    if (!candidate) {
+      return jsonResponse({ results: [], totalResults: 0, modelSummary: '' });
+    }
 
-    return new Response(
-      JSON.stringify({
-        results,
-        totalResults: parseInt(data.searchInformation?.totalResults || '0', 10),
-      }),
-      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    const metadata = candidate.groundingMetadata;
+    const modelText = candidate.content?.parts?.map((p) => p.text || '').join('\n') || '';
+
+    const chunks = metadata?.groundingChunks || [];
+    const supports = metadata?.groundingSupports || [];
+
+    // Build search results from grounding metadata
+    const results = chunks.map((chunk, idx) => {
+      const uri = chunk.web?.uri || '';
+      const title = chunk.web?.title || '';
+
+      // Gather supporting text segments that reference this chunk
+      const snippetParts = supports
+        .filter((s) => s.groundingChunkIndices?.includes(idx))
+        .map((s) => s.segment?.text || '')
+        .filter((t) => t.length > 0);
+
+      const snippet = snippetParts.join(' ').substring(0, 400) || '';
+
+      let displayLink = '';
+      try {
+        displayLink = new URL(uri).hostname;
+      } catch {}
+
+      return { title, link: uri, snippet, displayLink, formattedUrl: uri };
+    });
+
+    // Limit to requested number of results
+    const limited = results.slice(0, num || 10);
+
+    return jsonResponse({
+      results: limited,
+      totalResults: chunks.length,
+      modelSummary: modelText,
+    });
   } catch (error) {
-    return new Response(
-      JSON.stringify({ error: 'Search failed', detail: error.message }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return jsonResponse({ error: 'Search failed', detail: error.message }, 500);
   }
 }

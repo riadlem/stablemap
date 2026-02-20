@@ -7,19 +7,13 @@ import http from 'http';
 
 const PORT = 3001;
 const GOOGLE_AI_API_KEY = process.env.GOOGLE_AI_API_KEY;
-const GOOGLE_CSE_ID = process.env.GOOGLE_CSE_ID;
 
 if (!GOOGLE_AI_API_KEY) {
   console.error('❌ GOOGLE_AI_API_KEY not set. Required for Google Web Search.');
   process.exit(1);
 }
 
-if (!GOOGLE_CSE_ID) {
-  console.error('❌ GOOGLE_CSE_ID not set. Create a Programmable Search Engine at https://programmablesearchengine.google.com/ and add the ID.');
-  process.exit(1);
-}
-
-console.log('🔑 Google Web Search configured (API key + CSE ID)');
+console.log('🔑 Google Web Search configured (API key)');
 
 // --- HTML to Text helper ---
 function htmlToText(html) {
@@ -47,10 +41,10 @@ async function readBody(req) {
   return JSON.parse(rawBody);
 }
 
-// --- Route: /api/search (Google Custom Search) ---
+// --- Route: /api/search (Google Web Search via Gemini google_search grounding) ---
 async function handleSearch(req, res) {
   try {
-    const { query, num, dateRestrict, siteSearch, start, sort } = await readBody(req);
+    const { query, num, dateRestrict } = await readBody(req);
 
     if (!query || typeof query !== 'string') {
       res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -58,20 +52,37 @@ async function handleSearch(req, res) {
       return;
     }
 
-    const params = new URLSearchParams({
-      key: GOOGLE_AI_API_KEY,
-      cx: GOOGLE_CSE_ID,
-      q: query,
-      num: String(Math.min(num || 10, 10)),
-    });
+    // Build search prompt with optional time constraint
+    let searchPrompt = query;
+    if (dateRestrict) {
+      const timeMap = {
+        'd1': 'from the past day',
+        'd7': 'from the past week',
+        'w2': 'from the past 2 weeks',
+        'm1': 'from the past month',
+        'm3': 'from the past 3 months',
+        'y1': 'from the past year',
+      };
+      const timeRange = timeMap[dateRestrict] || '';
+      if (timeRange) searchPrompt += ` ${timeRange}`;
+    }
 
-    if (dateRestrict) params.set('dateRestrict', dateRestrict);
-    if (siteSearch) params.set('siteSearch', siteSearch);
-    if (start) params.set('start', String(start));
-    if (sort) params.set('sort', sort);
-
+    // Call Gemini API with google_search grounding tool
     const response = await fetch(
-      `https://www.googleapis.com/customsearch/v1?${params.toString()}`
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GOOGLE_AI_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: searchPrompt }],
+            },
+          ],
+          tools: [{ google_search: {} }],
+        }),
+      }
     );
 
     const data = await response.json();
@@ -79,24 +90,52 @@ async function handleSearch(req, res) {
     if (!response.ok) {
       res.writeHead(response.status, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
-        error: 'Google Search API error',
+        error: 'Google Web Search API error',
         detail: data.error?.message || JSON.stringify(data),
       }));
       return;
     }
 
-    const results = (data.items || []).map((item) => ({
-      title: item.title || '',
-      link: item.link || '',
-      snippet: item.snippet || '',
-      displayLink: item.displayLink || '',
-      formattedUrl: item.formattedUrl || '',
-    }));
+    const candidate = data.candidates?.[0];
+    if (!candidate) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ results: [], totalResults: 0, modelSummary: '' }));
+      return;
+    }
+
+    const metadata = candidate.groundingMetadata;
+    const modelText = candidate.content?.parts?.map((p) => p.text || '').join('\n') || '';
+
+    const chunks = metadata?.groundingChunks || [];
+    const supports = metadata?.groundingSupports || [];
+
+    // Build search results from grounding metadata
+    const results = chunks.map((chunk, idx) => {
+      const uri = chunk.web?.uri || '';
+      const title = chunk.web?.title || '';
+
+      // Gather supporting text segments that reference this chunk
+      const snippetParts = supports
+        .filter((s) => s.groundingChunkIndices?.includes(idx))
+        .map((s) => s.segment?.text || '')
+        .filter((t) => t.length > 0);
+
+      const snippet = snippetParts.join(' ').substring(0, 400) || '';
+
+      let displayLink = '';
+      try { displayLink = new URL(uri).hostname; } catch {}
+
+      return { title, link: uri, snippet, displayLink, formattedUrl: uri };
+    });
+
+    // Limit to requested number
+    const limited = results.slice(0, num || 10);
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
-      results,
-      totalResults: parseInt(data.searchInformation?.totalResults || '0', 10),
+      results: limited,
+      totalResults: chunks.length,
+      modelSummary: modelText,
     }));
   } catch (err) {
     res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -205,6 +244,6 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`✅ API proxy running on http://localhost:${PORT}`);
-  console.log(`   /api/search     → Google Custom Search API`);
+  console.log(`   /api/search     → Google Web Search (Gemini + google_search)`);
   console.log(`   /api/fetch-url  → URL content fetcher`);
 });
