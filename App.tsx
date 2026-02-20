@@ -133,7 +133,7 @@ const App: React.FC = () => {
       newPartners.push({
         name: trimmed,
         type: 'Investor',
-        description: `Investor in ${company.name}.`,
+        description: '',
       });
     }
 

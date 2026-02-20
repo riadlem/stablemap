@@ -261,7 +261,7 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
     const newPartner: Partner = {
       name: name.trim(),
       type,
-      description: `${type === 'Investor' ? 'Investor in' : 'Partnership with'} ${company.name}.`,
+      description: type !== 'Investor' ? `Partnership with ${company.name}.` : '',
     };
     await onUpdateCompany({ ...company, partners: [...company.partners, newPartner] });
     setPartnerSearchTerm('');
@@ -508,7 +508,7 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
                         </div>
                         
                         {company.funding ? (
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 <div>
                                     <div className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Total Raised</div>
                                     <div className="text-2xl font-bold text-white">{company.funding.totalRaised || "Undisclosed"}</div>
@@ -516,17 +516,6 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
                                 <div>
                                     <div className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Latest Valuation</div>
                                     <div className="text-2xl font-bold text-white">{company.funding.valuation || "Unknown"}</div>
-                                </div>
-                                <div>
-                                    <div className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Key Investors</div>
-                                    <div className="flex flex-wrap gap-2">
-                                        {(company.funding.investors || []).slice(0, 4).map(inv => (
-                                            <span key={inv} className="bg-white/20 px-2 py-1 rounded text-xs font-medium">{inv}</span>
-                                        ))}
-                                        {(!company.funding.investors || company.funding.investors.length === 0) && (
-                                            <span className="text-slate-500 text-sm">No data available</span>
-                                        )}
-                                    </div>
                                 </div>
                             </div>
                         ) : (
@@ -568,9 +557,6 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
                           <X size={10} />
                         </button>
                         <div className="font-semibold text-slate-900 text-sm">{p.name}</div>
-                        {p.description && (
-                          <div className="text-xs text-slate-500 mt-0.5">{p.description}</div>
-                        )}
                         {p.date && (
                           <div className="text-[10px] text-amber-600 font-medium mt-1">{p.date}</div>
                         )}
