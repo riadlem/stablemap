@@ -523,7 +523,7 @@ const App: React.FC = () => {
 
     for (const company of pendingCompanies) {
       try {
-        const enriched = await enrichCompanyData(company.name);
+        const enriched = await enrichCompanyData(company.name, company);
         if (Object.keys(enriched).length > 0) {
           if (enriched.partners && enriched.partners.length > 0) await syncPartnershipsToNews(company.name, enriched.partners);
           
@@ -697,7 +697,7 @@ const App: React.FC = () => {
 
   const handleRefreshCompany = async (company: Company) => {
       try {
-          const enriched = await enrichCompanyData(company.name);
+          const enriched = await enrichCompanyData(company.name, company);
           if (enriched.partners && enriched.partners.length > 0) await syncPartnershipsToNews(company.name, enriched.partners);
           let logoUrl = company.logoPlaceholder;
           if (enriched.website && (company.logoPlaceholder.includes('ui-avatars.com') || company.logoPlaceholder.includes('clearbit.com'))) {

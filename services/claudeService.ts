@@ -562,7 +562,8 @@ const extractCompanyNamesFromText = (text: string, excludeNames: Set<string>): s
 // --- BUSINESS LOGIC ---
 
 export const enrichCompanyData = async (
-  companyName: string
+  companyName: string,
+  existingCompany?: Partial<Company>
 ): Promise<Partial<Company>> => {
   try {
     // Search for company info — broad query first, fall back to just the name
@@ -595,9 +596,15 @@ export const enrichCompanyData = async (
     let description = '';
     let website = '';
     let aiPartners: Partner[] = [];
+
+    // Build existing-description reference block for the AI prompt
+    const existingDescRef = existingCompany?.description
+      ? `\n\nEXISTING DESCRIPTION (use as reference — keep accurate facts, update with new info, improve clarity):\n${existingCompany.description}\n`
+      : '';
+
     try {
       const aiResponse = await callAI(
-        `Based on this information about "${companyName}":\n\n${rawContext}\n\nRespond with EXACTLY this format (three sections separated by "---"):\n\nDESCRIPTION:\nOne sentence about what ${companyName} is (core business, sector, where it is based).\n\n- Bullet point about a specific product, platform, or service\n- Bullet point about a relevant partnership, initiative, or activity\n- Bullet point about another concrete activity or achievement\n\n---\nPARTNERS:\n- PartnerName | type | short description of the relationship\n- PartnerName | type | short description of the relationship\n\n---\nWEBSITE: https://example.com\n\nRules for DESCRIPTION:\n- First line: ONE sentence, what the company does. No founder names, no CEO names, no people.\n- Then bullet points (3-5 max) about concrete activities in stablecoin, digital asset, blockchain, tokenization, or fintech. Each bullet must be unique — no duplicate or overlapping info.\n- Do NOT mention founders, CEOs, executives, or any person by name.\n- Do NOT use markdown bold (**) or italic (*). Plain text only.\n- Do NOT repeat the company name at the start of every bullet.\n\nRules for PARTNERS:\n- List companies/organizations that ${companyName} has partnered with, integrated with, built on, or collaborates with.\n- Also list investors/backers if mentioned (use type "Investor").\n- type must be one of: Fortune500Global, CryptoNative, Investor\n- Use Fortune500Global for large traditional companies (banks, tech giants, payment networks).\n- Use CryptoNative for blockchain/crypto/DeFi companies.\n- Use Investor for VCs, funds, and backers.\n- Only the company/org name — no people, no "as a partner", no extra words.\n- Max 10 partners. Only include ones with evidence in the search results.\n- If none found, write "none"\n\nRules for WEBSITE:\n- The company's official homepage URL (not Wikipedia, not Crunchbase, not LinkedIn, not news sites). If unsure, write "unknown".`,
+        `Based on this information about "${companyName}":\n\n${rawContext}${existingDescRef}\n\nRespond with EXACTLY this format (three sections separated by "---"):\n\nDESCRIPTION:\nOne sentence about what ${companyName} is (core business, sector, where it is based).\n\n- Bullet point about a specific product, platform, or service\n- Bullet point about a relevant partnership, initiative, or activity\n- Bullet point about another concrete activity or achievement\n\n---\nPARTNERS:\n- PartnerName | type | short description of the relationship\n- PartnerName | type | short description of the relationship\n\n---\nWEBSITE: https://example.com\n\nRules for DESCRIPTION:\n- First line: ONE sentence, what the company does. No founder names, no CEO names, no people.${existingCompany?.description ? '\n- An EXISTING DESCRIPTION is provided above. Use it as a starting reference: keep facts that are still accurate, add any new information from the search results, and improve clarity. Do not discard valid existing details just because they are not in the new search results.' : ''}\n- Then bullet points (3-5 max) about concrete activities in stablecoin, digital asset, blockchain, tokenization, or fintech. Each bullet must be unique — no duplicate or overlapping info.\n- Do NOT mention founders, CEOs, executives, or any person by name.\n- Do NOT use markdown bold (**) or italic (*). Plain text only.\n- Do NOT repeat the company name at the start of every bullet.\n\nRules for PARTNERS:\n- List companies/organizations that ${companyName} has partnered with, integrated with, built on, or collaborates with.\n- Also list investors/backers if mentioned (use type "Investor").\n- type must be one of: Fortune500Global, CryptoNative, Investor\n- Use Fortune500Global for large traditional companies (banks, tech giants, payment networks).\n- Use CryptoNative for blockchain/crypto/DeFi companies.\n- Use Investor for VCs, funds, and backers.\n- Only the company/org name — no people, no "as a partner", no extra words.\n- Max 10 partners. Only include ones with evidence in the search results.\n- If none found, write "none"\n\nRules for WEBSITE:\n- The company's official homepage URL (not Wikipedia, not Crunchbase, not LinkedIn, not news sites). If unsure, write "unknown".`,
         'You extract structured company data from search results. No filler, no markdown formatting, no people names.'
       );
 
@@ -750,8 +757,35 @@ export const enrichCompanyData = async (
     }
     const partners = [...partnerMap.values()].slice(0, 15);
 
-    // Try to extract funding info
-    const funding = extractFundingFromText(allText);
+    // Try to extract funding info from existing search results first
+    let funding = extractFundingFromText(allText);
+
+    // For Crypto-First companies, do a dedicated funding search if we didn't find funding data
+    const isCryptoFirst = focus === 'Crypto-First' || existingCompany?.focus === 'Crypto-First';
+    if (isCryptoFirst && (!funding || (!funding.totalRaised && !funding.valuation))) {
+      try {
+        const { results: fundingResults } = await searchWebFull(
+          `"${companyName}" funding round raised valuation series investors`,
+          { num: 8 }
+        );
+        if (fundingResults.length > 0) {
+          const fundingText = fundingResults.map(r => `${r.title} ${r.snippet}`).join('\n');
+          const fundingData = extractFundingFromText(fundingText);
+          if (fundingData) {
+            // Merge: prefer new dedicated funding data, but keep any existing fields
+            funding = {
+              totalRaised: fundingData.totalRaised || funding?.totalRaised,
+              lastRound: fundingData.lastRound || funding?.lastRound,
+              valuation: fundingData.valuation || funding?.valuation,
+              investors: [...(funding?.investors || []), ...(fundingData.investors || [])],
+              lastRoundDate: fundingData.lastRoundDate || funding?.lastRoundDate,
+            };
+          }
+        }
+      } catch (err) {
+        logger.warn('search', `Dedicated funding search failed for ${companyName}`);
+      }
+    }
 
     // Check for parent company pattern (e.g. "PwC India" → parent "PwC")
     let parentCompany: string | undefined;
