@@ -1,6 +1,7 @@
 
 import { Company, Partner, Job, NewsItem, Category } from '../types';
 import { logger } from './logger';
+import { getCurrentModel, buildRequestBody, extractResponseText, rotateModel, resetFailures, allModelsExhausted } from './aiModels';
 
 // --- CONFIGURATION ---
 
@@ -27,12 +28,17 @@ interface SearchOptions {
   sort?: string;
 }
 
+interface SearchResponse {
+  results: SearchResult[];
+  modelSummary: string;
+}
+
 // --- CORE SEARCH FUNCTION (via /api/search proxy) ---
 
-const searchWeb = async (
+const searchWebFull = async (
   query: string,
   options: SearchOptions = {}
-): Promise<SearchResult[]> => {
+): Promise<SearchResponse> => {
   const start = Date.now();
   logger.info('search', `Searching web`, query.substring(0, 120));
 
@@ -49,17 +55,26 @@ const searchWeb = async (
     if (!response.ok) {
       const errText = await response.text();
       logger.error('search', `Search API error ${response.status}`, errText);
-      return [];
+      return { results: [], modelSummary: '' };
     }
 
     const data = await response.json();
     const results: SearchResult[] = data.results || [];
     logger.info('search', `Search returned ${results.length} results (${duration}ms)`);
-    return results;
+    return { results, modelSummary: data.modelSummary || '' };
   } catch (err: any) {
     logger.error('search', `Search failed`, err?.message || String(err));
-    return [];
+    return { results: [], modelSummary: '' };
   }
+};
+
+/** Convenience wrapper — returns only results (used by most callers) */
+const searchWeb = async (
+  query: string,
+  options: SearchOptions = {}
+): Promise<SearchResult[]> => {
+  const { results } = await searchWebFull(query, options);
+  return results;
 };
 
 // --- URL CONTENT FETCHER (via /api/fetch-url) ---
@@ -83,6 +98,36 @@ export const fetchUrlContent = async (
     logger.error('api', `fetchUrlContent failed for ${url}`, err?.message || String(err));
     return null;
   }
+};
+
+// --- AI HELPER (via /api/ai proxy with model rotation) ---
+
+const callAI = async (prompt: string, systemPrompt?: string): Promise<string> => {
+  while (!allModelsExhausted()) {
+    const model = getCurrentModel();
+    const body = buildRequestBody(model, prompt, systemPrompt, 0.3);
+    try {
+      const response = await fetch(model.proxyEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) {
+        logger.warn('ai', `${model.displayName} returned ${response.status}, rotating`);
+        rotateModel();
+        continue;
+      }
+      const data = await response.json();
+      const text = extractResponseText(model.provider, data);
+      resetFailures();
+      return text;
+    } catch (err: any) {
+      logger.warn('ai', `${model.displayName} failed: ${err?.message}, rotating`);
+      rotateModel();
+    }
+  }
+  resetFailures();
+  return '';
 };
 
 // --- TEXT PARSING HELPERS ---
@@ -393,7 +438,7 @@ export const enrichCompanyData = async (
 ): Promise<Partial<Company>> => {
   try {
     // Search for company info + crypto relevance
-    const results = await searchWeb(
+    const { results, modelSummary } = await searchWebFull(
       `"${companyName}" (stablecoin OR blockchain OR "digital asset" OR crypto OR payments OR fintech)`,
       { num: 10 }
     );
@@ -406,14 +451,28 @@ export const enrichCompanyData = async (
     // Combine all text for analysis
     const allText = results.map(r => `${r.title} ${r.snippet}`).join('\n');
 
-    // Extract description from top snippets
-    const descSnippets = results
-      .slice(0, 3)
-      .map(r => r.snippet)
-      .filter(s => s && s.length > 20);
-    const description = descSnippets.length > 0
-      ? descSnippets.join(' ').substring(0, 500)
-      : `${companyName} operates in the digital asset and blockchain ecosystem.`;
+    // Generate a structured description via AI
+    const rawContext = modelSummary || results.slice(0, 5).map(r => `${r.title}: ${r.snippet}`).join('\n');
+    let description = '';
+    try {
+      description = await callAI(
+        `Based on this information about "${companyName}":\n\n${rawContext}\n\nWrite a company description. Format:\n- First line: ONE sentence explaining what ${companyName} is and does (core business).\n- Then a blank line, followed by its relevant activities in the stablecoin, digital asset, blockchain, or fintech space as bullet points (use "- " prefix). Each bullet should be a specific activity, product, partnership, or initiative — not generic.\n- Maximum 5 bullet points. Only include bullets you have evidence for.\n- Do NOT use markdown bold (**) or italic (*). Use plain text only.\n- Do NOT include any intro like "Here is" — start directly with the sentence.`,
+        'You are a concise business analyst. Write factual, plain-text company descriptions. No markdown formatting. No filler.'
+      );
+    } catch (err) {
+      logger.warn('ai', `AI description generation failed for ${companyName}`);
+    }
+
+    // Fallback: clean up raw snippets if AI call failed
+    if (!description) {
+      const descSnippets = results
+        .slice(0, 3)
+        .map(r => r.snippet)
+        .filter(s => s && s.length > 20);
+      description = descSnippets.length > 0
+        ? descSnippets.join(' ').substring(0, 500)
+        : `${companyName} operates in the digital asset and blockchain ecosystem.`;
+    }
 
     // Find the company's website (prefer non-Wikipedia, non-aggregator results)
     const websiteResult = results.find(r =>
