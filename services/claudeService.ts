@@ -202,7 +202,7 @@ export const enrichCompanyData = async (
 This company may be crypto-native, a traditional enterprise with blockchain/crypto involvement, a VC/investment firm, or a technology company that supports the digital asset ecosystem. Analyze it regardless of its primary industry — we want to understand what they do and any connections to digital assets, stablecoins, blockchain, tokenization, or Web3.
 
 I need a JSON object with these fields:
-- "description": string (2-3 sentence company overview — what they do, their relevance to digital assets/crypto/blockchain if any)
+- "description": string (2-3 sentence company overview — be SPECIFIC: name their core product/service, what differentiates them from competitors, and their unique value proposition. NEVER use generic phrases like "enterprise-grade solutions", "enabling institutions to integrate blockchain", or "secure, compliant infrastructure" — instead describe the actual product, protocol, or service they offer and what makes them distinct)
 - "categories": string[] (from: "Issuer", "Infrastructure", "Wallet", "Payments", "DeFi", "Custody", "Banks")
 - "partners": array of objects with { "name": string, "type": "Fortune500Global" | "CryptoNative" | "Investor", "description": string, "date": string (YYYY-MM-DD if known), "sourceUrl": string (if known), "country": string (HQ country, e.g. "USA", "Germany", "Japan"), "region": "North America" | "Europe" | "APAC" | "LATAM" | "MEA" | "Global", "industry": string (e.g. "Financial Services", "Automotive", "Technology", "Energy", "Electronics") }
   (use type "Investor" for VC firms, PE firms, and investment funds that have invested in the company; use "Fortune500Global" for enterprise/corporate partners; use "CryptoNative" for crypto-native company partners)

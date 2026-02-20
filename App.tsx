@@ -490,8 +490,10 @@ const App: React.FC = () => {
 
   const handleRefreshPending = async () => {
     const pendingKeywords = ['Fetching', 'Intelligence unavailable', 'Queued', 'Analysis unavailable', 'Basic profile created', 'currently unavailable', 'Pending'];
+    const genericPhrases = ['enterprise-grade solutions', 'enabling traditional financial institutions', 'secure, compliant infrastructure', 'integrate blockchain technology and digital assets into their operations'];
     const pendingCompanies = companies.filter(c =>
       pendingKeywords.some(kw => c.description.includes(kw)) ||
+      genericPhrases.some(gp => c.description.includes(gp)) ||
       !c.description || c.description.length < 30
     );
 
