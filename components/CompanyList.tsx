@@ -42,7 +42,7 @@ const CompanyList: React.FC<CompanyListProps> = ({ companies, onSelectCompany, o
   const [newCompanyName, setNewCompanyName] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
-  const [sortBy, setSortBy] = useState<'az' | 'lastAdded' | 'mostPartners'>('az');
+  const [sortBy, setSortBy] = useState<'az' | 'lastAdded' | 'mostPartners'>('lastAdded');
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   // Recommendation State
