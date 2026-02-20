@@ -18,18 +18,12 @@ export interface ModelConfig {
 // OpenRouter free models have ":free" suffix — no cost, rate-limited.
 
 export const MODEL_ROSTER: ModelConfig[] = [
+  // --- Paid providers (Anthropic, then Google) ---
   {
     id: 'claude-sonnet-4-5-20250929',
     provider: 'anthropic',
     displayName: 'Sonnet 4.5',
     maxTokens: 8192,
-    proxyEndpoint: '/api/ai',
-  },
-  {
-    id: 'gpt-4o',
-    provider: 'openai',
-    displayName: 'GPT-4o',
-    maxTokens: 4096,
     proxyEndpoint: '/api/ai',
   },
   {
@@ -58,6 +52,14 @@ export const MODEL_ROSTER: ModelConfig[] = [
     id: 'qwen/qwen3-235b-a22b:free',
     provider: 'openrouter',
     displayName: 'Qwen3 235B',
+    maxTokens: 4096,
+    proxyEndpoint: '/api/ai',
+  },
+  // --- OpenAI (no subscription — last resort, will 401 and get skipped) ---
+  {
+    id: 'gpt-4o',
+    provider: 'openai',
+    displayName: 'GPT-4o',
     maxTokens: 4096,
     proxyEndpoint: '/api/ai',
   },
