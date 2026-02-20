@@ -228,7 +228,7 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
   const fetchJobs = async () => {
     setLoadingJobs(true);
     try {
-      const foundJobs = await findJobOpenings(company.name);
+      const foundJobs = await findJobOpenings(company.name, company.website);
       
       // Merge with existing jobs to preserve manual entries and deduplicate
       const existingJobs = company.jobs || [];

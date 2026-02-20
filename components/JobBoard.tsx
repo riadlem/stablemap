@@ -187,23 +187,28 @@ const JobBoard: React.FC<JobBoardProps> = ({ companies, onUpdateCompanies }) => 
   // AI Scan Logic
   const handleSmartScan = async () => {
     setIsScanning(true);
-    // Find companies that have no jobs listed yet or haven't been updated recently
-    // For simplicity, we scan everything that has 0 jobs first
-    const companiesToScan = companies.filter(c => !c.jobs || c.jobs.length === 0);
-    
+    // Prioritize Crypto-First companies (they're more relevant to the directory's focus).
+    // Within each group, scan companies with no jobs first.
+    const noJobs = companies.filter(c => !c.jobs || c.jobs.length === 0);
+    const cryptoFirstEmpty = noJobs.filter(c => c.focus === 'Crypto-First');
+    const cryptoSecondEmpty = noJobs.filter(c => c.focus !== 'Crypto-First');
+    const companiesToScan = [...cryptoFirstEmpty, ...cryptoSecondEmpty];
+
     // Limit to 5 at a time to be friendly to APIs/Time
     const batch = companiesToScan.slice(0, 5);
     setScanProgress({ current: 0, total: batch.length });
 
     if (batch.length === 0) {
       // If all empty ones are filled, maybe user wants to force refresh?
-      const confirmForce = window.confirm("All companies have data. Force re-scan random 5 companies?");
+      const confirmForce = window.confirm("All companies have data. Force re-scan 5 Crypto-First companies?");
       if (!confirmForce) {
         setIsScanning(false);
         return;
       }
-      // Pick 5 random
-      const randomBatch = [...companies].sort(() => 0.5 - Math.random()).slice(0, 5);
+      // Pick 5 random crypto-first companies, fall back to any if not enough
+      const cryptoFirst = companies.filter(c => c.focus === 'Crypto-First');
+      const pool = cryptoFirst.length >= 5 ? cryptoFirst : companies;
+      const randomBatch = [...pool].sort(() => 0.5 - Math.random()).slice(0, 5);
       batch.push(...randomBatch);
       setScanProgress({ current: 0, total: batch.length });
     }
@@ -213,7 +218,7 @@ const JobBoard: React.FC<JobBoardProps> = ({ companies, onUpdateCompanies }) => 
     for (let i = 0; i < batch.length; i++) {
       const company = batch[i];
       try {
-        const foundJobs = await findJobOpenings(company.name);
+        const foundJobs = await findJobOpenings(company.name, company.website);
         
         // Update local copy of companies array using MERGE logic
         const idx = updatedCompanies.findIndex(c => c.id === company.id);

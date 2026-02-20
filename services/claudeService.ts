@@ -675,57 +675,75 @@ export const enrichCompanyData = async (
   }
 };
 
-export const findJobOpenings = async (companyName: string): Promise<Job[]> => {
+export const findJobOpenings = async (companyName: string, website?: string): Promise<Job[]> => {
   try {
-    const results = await searchWeb(
-      `"${companyName}" careers jobs (blockchain OR crypto OR stablecoin OR "digital asset")`,
-      { num: 10 }
+    // Two searches in parallel:
+    // 1. Target major ATS platforms where crypto-native companies post jobs
+    // 2. General hiring search with crypto/stablecoin context
+    const atsQuery = `${companyName} (site:lever.co OR site:greenhouse.io OR site:ashbyhq.com OR site:workable.com OR site:jobs.smartrecruiters.com OR site:boards.greenhouse.io)`;
+    const generalQuery = `"${companyName}" jobs hiring 2025 (crypto OR blockchain OR stablecoin OR "digital asset" OR web3)`;
+
+    const [atsResults, generalResults] = await Promise.all([
+      searchWeb(atsQuery, { num: 10 }),
+      searchWeb(generalQuery, { num: 8 }),
+    ]);
+
+    // Merge, deduplicate by URL
+    const seen = new Set<string>();
+    const allResults = [...atsResults, ...generalResults].filter(r => {
+      if (seen.has(r.link)) return false;
+      seen.add(r.link);
+      return true;
+    });
+
+    if (allResults.length === 0) return [];
+
+    // Use AI to extract individual job listings from the combined search context
+    const context = allResults.slice(0, 14).map(r =>
+      `[${r.title}] (${r.link})\n${r.snippet}`
+    ).join('\n\n');
+
+    const aiRaw = await callAI(
+      `You are extracting job listings for "${companyName}" from web search results.\n\nSearch results:\n${context}\n\nExtract every distinct job opening found. For each job, output EXACTLY one line in this format:\nTITLE | DEPARTMENT | LOCATION | URL\n\nRules:\n- TITLE: The exact job title (e.g. "Senior Blockchain Engineer", "Head of Partnerships", "Protocol Economist"). Do NOT include the company name.\n- DEPARTMENT: Must be exactly one of: Strategy, Customer Success, Business Dev, Partnerships, Other\n- LOCATION: City/Country or "Remote" or "Hybrid". If multiple, use the first one.\n- URL: The direct job listing URL from the search result. If no direct URL, use the careers page URL.\n- Only include real, specific job titles — not "View all jobs" or generic pages.\n- Max 10 jobs. If fewer real listings exist, output fewer.\n- If no jobs found, output: NONE`,
+      'Extract job listings from search results. Output only the requested format, no extra text.'
     );
 
-    if (results.length === 0) return [];
+    if (!aiRaw || /^none$/im.test(aiRaw.trim())) return [];
 
-    // Map search results to job-like entries
-    return results
-      .filter(r => {
-        const lower = (r.title + ' ' + r.snippet).toLowerCase();
-        return (
-          lower.includes('job') ||
-          lower.includes('career') ||
-          lower.includes('hiring') ||
-          lower.includes('position') ||
-          lower.includes('role') ||
-          lower.includes('opening')
-        );
-      })
-      .slice(0, 8)
-      .map((r, idx) => {
-        // Try to extract job title from search result title
-        const titleClean = r.title
-          .replace(/ [-|–] .*$/, '')
-          .replace(/\s*\(.*?\)\s*/g, '')
-          .trim();
+    const today = new Date().toISOString().split('T')[0];
+    const jobs: Job[] = [];
 
-        // Determine department from keywords
-        const lower = (r.title + ' ' + r.snippet).toLowerCase();
-        let department: Job['department'] = 'Other';
-        if (/strateg/i.test(lower)) department = 'Strategy';
-        else if (/customer success|support/i.test(lower)) department = 'Customer Success';
-        else if (/business dev|biz dev|sales/i.test(lower)) department = 'Business Dev';
-        else if (/partner/i.test(lower)) department = 'Partnerships';
+    for (const line of aiRaw.split('\n')) {
+      const parts = line.split('|').map(s => s.trim());
+      if (parts.length < 4) continue;
+      const [title, rawDept, location, url] = parts;
+      if (!title || title.toUpperCase() === title || title === 'TITLE') continue; // skip header lines
 
-        // Try to extract location
-        const locMatch = r.snippet.match(/(?:Location|Based in|Office):\s*([^.;]+)/i);
-        const locations = locMatch ? [locMatch[1].trim()] : ['Remote'];
+      const deptMap: Record<string, Job['department']> = {
+        'strategy': 'Strategy',
+        'customer success': 'Customer Success',
+        'business dev': 'Business Dev',
+        'partnerships': 'Partnerships',
+        'other': 'Other',
+      };
+      const department: Job['department'] = deptMap[rawDept.toLowerCase()] ?? 'Other';
 
-        return {
-          id: `search-job-${Date.now()}-${idx}`,
-          title: titleClean || `${companyName} - Open Position`,
-          department,
-          locations,
-          postedDate: new Date().toISOString().split('T')[0],
-          url: r.link,
-        };
+      // Validate URL is a real URL
+      const cleanUrl = url && url.startsWith('http') ? url : (website || '#');
+
+      jobs.push({
+        id: `search-job-${Date.now()}-${jobs.length}`,
+        title,
+        department,
+        locations: [location || 'Remote'],
+        postedDate: today,
+        url: cleanUrl,
       });
+
+      if (jobs.length >= 10) break;
+    }
+
+    return jobs;
   } catch (error) {
     console.error('findJobOpenings failed for', companyName, ':', error);
     return [];
