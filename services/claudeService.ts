@@ -275,66 +275,141 @@ const extractLocationFromText = (text: string): {
   country: string;
   region: 'North America' | 'EU' | 'Europe' | 'APAC' | 'LATAM' | 'MEA' | 'Global';
 } => {
-  const hqPatterns = [
-    // "headquartered in City" or "headquartered in City, Country"
-    /headquartered in ([A-Z][A-Za-z\s.''-]{1,25}(?:,\s*[A-Z][A-Za-z\s.''-]{1,25})?)/i,
-    // "based in City" or "based in City, Country"
-    /based in ([A-Z][A-Za-z\s.''-]{1,25}(?:,\s*[A-Z][A-Za-z\s.''-]{1,25})?)/i,
-    // "headquarters in City"
-    /headquarters? (?:is |are )?(?:in |at )([A-Z][A-Za-z\s.''-]{1,25}(?:,\s*[A-Z][A-Za-z\s.''-]{1,25})?)/i,
-    // "City-based company"
-    /([A-Z][a-z]+(?:[\s,]+[A-Z][a-z]+){0,2})-based company/,
+  // Trigger patterns — capture ONLY to the next comma, period, or semicolon (the city part)
+  const hqTriggers = [
+    /(?:headquartered|headquarters?) (?:is |are )?(?:in |at )([^,.;:\n]+)/i,
+    /based in ([^,.;:\n]+)/i,
+    /([A-Z][a-z]+(?:\s[A-Z][a-z]+){0,2})-based company/,
   ];
 
+  // Known location suffixes — only append after comma if it's a real place
+  const knownLocationSuffix = /^(?:USA|US|U\.S\.|UK|U\.K\.|United States|United Kingdom|Canada|Germany|France|Switzerland|Netherlands|Ireland|Japan|China|India|Singapore|South Korea|Australia|Brazil|UAE|United Arab Emirates|Israel|Zimbabwe|Nigeria|Kenya|Ghana|South Africa|Mexico|Argentina|Bermuda|Cayman Islands|Bahamas|Hong Kong|Taiwan|Sweden|Norway|Denmark|Finland|Spain|Italy|Portugal|Austria|Belgium|Luxembourg|Poland|Czech Republic|Greece|Turkey|Russia|Thailand|Indonesia|Malaysia|Philippines|Vietnam|New Zealand|Qatar|Bahrain|Saudi Arabia|Egypt|Morocco|Rwanda|Jamaica|El Salvador|California|Texas|New York|Florida|Illinois|Massachusetts|Pennsylvania|Virginia|Colorado|Georgia|Ohio|Washington|Connecticut|Maryland|New Jersey|North Carolina|Arizona|Tennessee|Oregon|Minnesota|Wisconsin|Missouri|Michigan|Indiana|Nevada|District of Columbia)$/i;
+
   let headquarters = '';
-  for (const p of hqPatterns) {
+  for (const p of hqTriggers) {
     const m = text.match(p);
     if (m) {
-      headquarters = m[1].trim();
-      // Sanitize: strip trailing noise — location should be short and only contain place names
-      // Remove anything after common sentence-continuation words
-      headquarters = headquarters.replace(/\s*(?:,\s*)?(?:the|a|an|it|which|that|and|with|is|are|was|has|its|known|offering|providing|specializing|focused|serving)\b.*$/i, '').trim();
-      // Remove trailing punctuation
-      headquarters = headquarters.replace(/[,;:.]+$/, '').trim();
-      // If result is too long it's probably not a clean location
-      if (headquarters.length > 50) headquarters = headquarters.split(',')[0].trim();
+      let city = m[1].trim();
+      // Clean out any noise words that leaked in
+      city = city.replace(/\s+(?:the|a|an|is|are|was|has|its|which|that|and|with)\b.*$/i, '').trim();
+      city = city.replace(/[,;:.]+$/, '').trim();
+      if (city.length > 40) city = city.substring(0, 40).replace(/\s\S*$/, '').trim();
+
+      // Check if there's a location suffix after the comma (e.g. ", USA" or ", Switzerland")
+      const afterCity = text.substring(text.indexOf(m[0]) + m[0].length);
+      const suffixMatch = afterCity.match(/^,\s*([^,.;:\n]+)/);
+      if (suffixMatch) {
+        const suffix = suffixMatch[1].trim();
+        if (knownLocationSuffix.test(suffix)) {
+          headquarters = `${city}, ${suffix}`;
+        } else {
+          headquarters = city;
+        }
+      } else {
+        headquarters = city;
+      }
       break;
     }
   }
 
-  // Country detection
+  // Country detection — match against headquarters first (more precise), then full text
   const countryPatterns: [string, RegExp][] = [
+    // Americas
     ['USA', /\b(?:United States|U\.?S\.?A?\.?|New York|San Francisco|California|Boston|Chicago|Washington|Miami|Austin|Denver|Seattle)\b/i],
-    ['United Kingdom', /\b(?:United Kingdom|U\.?K\.?|London|England|Scotland)\b/i],
-    ['Germany', /\b(?:Germany|Berlin|Frankfurt|Munich)\b/i],
-    ['France', /\b(?:France|Paris)\b/i],
-    ['Switzerland', /\b(?:Switzerland|Zurich|Zug|Geneva)\b/i],
-    ['Singapore', /\bSingapore\b/i],
-    ['Japan', /\b(?:Japan|Tokyo)\b/i],
-    ['South Korea', /\b(?:South Korea|Seoul)\b/i],
-    ['China', /\b(?:China|Beijing|Shanghai|Hong Kong)\b/i],
-    ['UAE', /\b(?:UAE|Dubai|Abu Dhabi|United Arab Emirates)\b/i],
-    ['Canada', /\b(?:Canada|Toronto|Vancouver)\b/i],
-    ['Australia', /\b(?:Australia|Sydney|Melbourne)\b/i],
-    ['Netherlands', /\b(?:Netherlands|Amsterdam)\b/i],
+    ['Canada', /\b(?:Canada|Toronto|Vancouver|Ottawa|Montreal)\b/i],
+    ['Mexico', /\b(?:Mexico|Mexico City|Ciudad de México)\b/i],
+    ['Brazil', /\b(?:Brazil|São Paulo|Rio de Janeiro|Brasília)\b/i],
+    ['Argentina', /\b(?:Argentina|Buenos Aires)\b/i],
+    ['Colombia', /\b(?:Colombia|Bogotá)\b/i],
+    ['Chile', /\b(?:Chile|Santiago)\b/i],
+    ['El Salvador', /\bEl Salvador\b/i],
+    ['Bermuda', /\bBermuda\b/i],
+    ['Cayman Islands', /\bCayman Islands\b/i],
+    ['Bahamas', /\b(?:Bahamas|Nassau)\b/i],
+    ['Jamaica', /\b(?:Jamaica|Kingston)\b/i],
+    // Europe
+    ['United Kingdom', /\b(?:United Kingdom|U\.?K\.?|London|England|Scotland|Edinburgh)\b/i],
+    ['Germany', /\b(?:Germany|Berlin|Frankfurt|Munich|Hamburg)\b/i],
+    ['France', /\b(?:France|Paris|Lyon)\b/i],
+    ['Switzerland', /\b(?:Switzerland|Zurich|Zug|Geneva|Basel)\b/i],
+    ['Netherlands', /\b(?:Netherlands|Amsterdam|Rotterdam|The Hague)\b/i],
     ['Ireland', /\b(?:Ireland|Dublin)\b/i],
-    ['Brazil', /\b(?:Brazil|São Paulo)\b/i],
-    ['India', /\b(?:India|Mumbai|Bangalore|Delhi)\b/i],
+    ['Spain', /\b(?:Spain|Madrid|Barcelona)\b/i],
+    ['Italy', /\b(?:Italy|Rome|Milan|Roma|Milano)\b/i],
+    ['Portugal', /\b(?:Portugal|Lisbon|Lisboa)\b/i],
+    ['Sweden', /\b(?:Sweden|Stockholm)\b/i],
+    ['Norway', /\b(?:Norway|Oslo)\b/i],
+    ['Denmark', /\b(?:Denmark|Copenhagen)\b/i],
+    ['Finland', /\b(?:Finland|Helsinki)\b/i],
+    ['Austria', /\b(?:Austria|Vienna|Wien)\b/i],
+    ['Belgium', /\b(?:Belgium|Brussels)\b/i],
+    ['Luxembourg', /\bLuxembourg\b/i],
+    ['Poland', /\b(?:Poland|Warsaw|Warszawa)\b/i],
+    ['Estonia', /\b(?:Estonia|Tallinn)\b/i],
+    ['Lithuania', /\b(?:Lithuania|Vilnius)\b/i],
+    ['Liechtenstein', /\bLiechtenstein\b/i],
+    ['Russia', /\b(?:Russia|Moscow)\b/i],
+    ['Turkey', /\b(?:Turkey|Türkiye|Istanbul|Ankara)\b/i],
+    // Asia-Pacific
+    ['Singapore', /\bSingapore\b/i],
+    ['Japan', /\b(?:Japan|Tokyo|Osaka)\b/i],
+    ['South Korea', /\b(?:South Korea|Seoul)\b/i],
+    ['China', /\b(?:China|Beijing|Shanghai|Shenzhen)\b/i],
+    ['Hong Kong', /\bHong Kong\b/i],
+    ['Taiwan', /\b(?:Taiwan|Taipei)\b/i],
+    ['India', /\b(?:India|Mumbai|Bangalore|Bengaluru|Delhi|Hyderabad)\b/i],
+    ['Australia', /\b(?:Australia|Sydney|Melbourne|Brisbane)\b/i],
+    ['New Zealand', /\b(?:New Zealand|Auckland|Wellington)\b/i],
+    ['Thailand', /\b(?:Thailand|Bangkok)\b/i],
+    ['Indonesia', /\b(?:Indonesia|Jakarta)\b/i],
+    ['Malaysia', /\b(?:Malaysia|Kuala Lumpur)\b/i],
+    ['Philippines', /\b(?:Philippines|Manila)\b/i],
+    ['Vietnam', /\b(?:Vietnam|Ho Chi Minh|Hanoi)\b/i],
+    // Middle East & Africa
+    ['UAE', /\b(?:UAE|Dubai|Abu Dhabi|United Arab Emirates)\b/i],
+    ['Israel', /\b(?:Israel|Tel Aviv|Jerusalem)\b/i],
+    ['Saudi Arabia', /\b(?:Saudi Arabia|Riyadh|Jeddah)\b/i],
+    ['Qatar', /\b(?:Qatar|Doha)\b/i],
+    ['Bahrain', /\b(?:Bahrain|Manama)\b/i],
+    ['South Africa', /\b(?:South Africa|Johannesburg|Cape Town|Pretoria)\b/i],
+    ['Nigeria', /\b(?:Nigeria|Lagos|Abuja)\b/i],
+    ['Kenya', /\b(?:Kenya|Nairobi)\b/i],
+    ['Ghana', /\b(?:Ghana|Accra)\b/i],
+    ['Zimbabwe', /\b(?:Zimbabwe|Harare)\b/i],
+    ['Rwanda', /\b(?:Rwanda|Kigali)\b/i],
+    ['Egypt', /\b(?:Egypt|Cairo)\b/i],
+    ['Morocco', /\b(?:Morocco|Casablanca|Rabat)\b/i],
+    ['Tanzania', /\b(?:Tanzania|Dar es Salaam)\b/i],
+    ['Ethiopia', /\b(?:Ethiopia|Addis Ababa)\b/i],
   ];
 
+  // Try matching against headquarters first (more precise), then full text
   let country = '';
   for (const [c, p] of countryPatterns) {
-    if (p.test(text)) { country = c; break; }
+    if (p.test(headquarters)) { country = c; break; }
+  }
+  if (!country) {
+    for (const [c, p] of countryPatterns) {
+      if (p.test(text)) { country = c; break; }
+    }
   }
 
   // Region mapping
   const regionMap: Record<string, 'North America' | 'EU' | 'Europe' | 'APAC' | 'LATAM' | 'MEA' | 'Global'> = {
     'USA': 'North America', 'Canada': 'North America',
-    'Germany': 'EU', 'France': 'EU', 'Netherlands': 'EU', 'Ireland': 'EU',
-    'United Kingdom': 'Europe', 'Switzerland': 'Europe',
-    'Singapore': 'APAC', 'Japan': 'APAC', 'South Korea': 'APAC', 'China': 'APAC', 'Australia': 'APAC', 'India': 'APAC',
-    'UAE': 'MEA',
-    'Brazil': 'LATAM',
+    'Mexico': 'LATAM', 'Brazil': 'LATAM', 'Argentina': 'LATAM', 'Colombia': 'LATAM', 'Chile': 'LATAM', 'El Salvador': 'LATAM',
+    'Bermuda': 'North America', 'Cayman Islands': 'North America', 'Bahamas': 'North America', 'Jamaica': 'LATAM',
+    'Germany': 'EU', 'France': 'EU', 'Netherlands': 'EU', 'Ireland': 'EU', 'Spain': 'EU', 'Italy': 'EU',
+    'Portugal': 'EU', 'Sweden': 'EU', 'Denmark': 'EU', 'Finland': 'EU', 'Austria': 'EU', 'Belgium': 'EU',
+    'Luxembourg': 'EU', 'Poland': 'EU', 'Estonia': 'EU', 'Lithuania': 'EU', 'Greece': 'EU',
+    'United Kingdom': 'Europe', 'Switzerland': 'Europe', 'Norway': 'Europe', 'Liechtenstein': 'Europe',
+    'Russia': 'Europe', 'Turkey': 'Europe',
+    'Singapore': 'APAC', 'Japan': 'APAC', 'South Korea': 'APAC', 'China': 'APAC', 'Hong Kong': 'APAC',
+    'Taiwan': 'APAC', 'India': 'APAC', 'Australia': 'APAC', 'New Zealand': 'APAC',
+    'Thailand': 'APAC', 'Indonesia': 'APAC', 'Malaysia': 'APAC', 'Philippines': 'APAC', 'Vietnam': 'APAC',
+    'UAE': 'MEA', 'Israel': 'MEA', 'Saudi Arabia': 'MEA', 'Qatar': 'MEA', 'Bahrain': 'MEA',
+    'South Africa': 'MEA', 'Nigeria': 'MEA', 'Kenya': 'MEA', 'Ghana': 'MEA', 'Zimbabwe': 'MEA',
+    'Rwanda': 'MEA', 'Egypt': 'MEA', 'Morocco': 'MEA', 'Tanzania': 'MEA', 'Ethiopia': 'MEA',
   };
 
   const region = regionMap[country] || 'Global';
