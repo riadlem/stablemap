@@ -113,9 +113,13 @@ const CompanyList: React.FC<CompanyListProps> = ({ companies, onSelectCompany, o
   });
 
   // Entity grouping: group local entities under parent companies
-  // Exclusion list: these pairs should remain separate even if name-matching would group them
-  const SEPARATE_ENTITIES: Record<string, string[]> = {
-    'Coinbase': ['Coinbase Ventures'],
+  // Corporate VC / distinct business unit suffixes — these should stay separate
+  // e.g. "Coinbase Ventures", "Google Capital", "Samsung Labs"
+  const CORPORATE_UNIT_SUFFIXES = ['Ventures', 'Capital', 'Labs', 'Investments', 'Fund', 'Funds', 'Crypto', 'Digital', 'Asset Management', 'Research', 'Foundation'];
+
+  const isCorporateUnit = (companyName: string, parentName: string): boolean => {
+    const suffix = companyName.slice(parentName.length + 1); // e.g. "Ventures" from "Coinbase Ventures"
+    return CORPORATE_UNIT_SUFFIXES.some(s => suffix === s || suffix.startsWith(s + ' '));
   };
 
   interface GroupedEntry {
@@ -144,9 +148,8 @@ const CompanyList: React.FC<CompanyListProps> = ({ companies, onSelectCompany, o
         for (const [otherName] of nameMap) {
           if (otherName === company.name) continue;
           if (company.name.startsWith(otherName + ' ') && company.name !== otherName) {
-            // Check exclusion list
-            const excluded = SEPARATE_ENTITIES[otherName];
-            if (excluded && excluded.includes(company.name)) continue;
+            // Skip corporate VC arms and distinct business units
+            if (isCorporateUnit(company.name, otherName)) continue;
             parentName = otherName;
             break;
           }
