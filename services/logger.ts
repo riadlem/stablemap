@@ -2,7 +2,7 @@ export interface LogEntry {
   id: string;
   timestamp: string;
   level: 'info' | 'warn' | 'error';
-  category: 'api' | 'news' | 'claude' | 'db' | 'general';
+  category: 'api' | 'news' | 'claude' | 'ai' | 'db' | 'general';
   message: string;
   detail?: string;
   durationMs?: number;

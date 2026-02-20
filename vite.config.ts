@@ -8,8 +8,8 @@ export default defineConfig(({ mode }) => {
       server: {
         port: 3000,
         host: '0.0.0.0',
-        // Proxy /api/claude to a local Express server during dev (see dev-server.js)
-        // In production on Vercel, /api/claude is handled by the serverless function natively
+        // Proxy /api/* to local dev server (see dev-server.js)
+        // In production on Vercel, /api/* is handled by serverless functions natively
         proxy: {
           '/api': {
             target: 'http://localhost:3001',

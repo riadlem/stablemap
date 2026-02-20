@@ -1,75 +1,117 @@
 
 import { Company, Partner, Job, NewsItem, Category } from '../types';
 import { logger } from './logger';
+import {
+  getCurrentModel,
+  getCurrentModelLabel,
+  rotateModel,
+  resetFailures,
+  allModelsExhausted,
+  buildRequestBody,
+  extractResponseText,
+  MODEL_ROSTER,
+  type ModelConfig,
+} from './aiModels';
 
 // --- CONFIGURATION ---
 
-const CLAUDE_MODEL = 'claude-sonnet-4-5-20250929';
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 1500;
 
 // Proxy endpoints — serverless functions hold API keys server-side
-const API_PROXY_URL = '/api/claude';
 const FETCH_URL_ENDPOINT = '/api/fetch-url';
 const NEWS_API_ENDPOINT = '/api/news';
 
 export const getCurrentModelName = (): string => {
-  return CLAUDE_MODEL;
+  return getCurrentModelLabel();
 };
 
-// --- CORE API CALL (via server-side proxy) ---
+// --- CORE API CALL (via server-side proxy, with provider rotation) ---
 
-interface ClaudeResponse {
-  content: { type: string; text?: string }[];
-  error?: { type: string; message: string };
-}
+const ROTATABLE_STATUS_CODES = new Set([429, 500, 502, 503, 529]);
 
-const callClaude = async (
+const callAI = async (
   prompt: string,
   systemPrompt?: string,
   temperature: number = 0.7
 ): Promise<string> => {
   const start = Date.now();
-  const body: any = {
-    model: CLAUDE_MODEL,
-    max_tokens: 4096,
-    messages: [{ role: 'user', content: prompt }],
-    temperature,
-  };
+  let lastError: Error | null = null;
 
-  if (systemPrompt) {
-    body.system = systemPrompt;
+  // Try every model in the roster before giving up
+  for (let attempt = 0; attempt < MODEL_ROSTER.length; attempt++) {
+    const model: ModelConfig = getCurrentModel();
+    const body = buildRequestBody(model, prompt, systemPrompt, temperature);
+
+    logger.info('ai', `Calling ${model.displayName} (${model.provider}/${model.id})`, prompt.substring(0, 120) + '...');
+
+    try {
+      const response = await fetch(model.proxyEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      const duration = Date.now() - start;
+      logger.api('POST', model.proxyEndpoint, response.status, duration);
+
+      if (!response.ok) {
+        const errText = await response.text();
+        logger.error('ai', `${model.displayName} API error ${response.status}`, errText);
+
+        // Rotate to next provider on overload / server errors
+        if (ROTATABLE_STATUS_CODES.has(response.status)) {
+          lastError = new Error(`${model.displayName} ${response.status}: ${errText}`);
+          rotateModel();
+          continue;
+        }
+
+        // Non-rotatable errors (400, 401, 403) — bail immediately
+        throw new Error(`API Error ${response.status}: ${errText}`);
+      }
+
+      const data = await response.json();
+
+      // Check for provider-specific error envelopes
+      if (data.error) {
+        const errMsg = typeof data.error === 'string' ? data.error : data.error.message || JSON.stringify(data.error);
+        logger.error('ai', `${model.displayName} returned error`, errMsg);
+        lastError = new Error(`${model.displayName} Error: ${errMsg}`);
+        rotateModel();
+        continue;
+      }
+
+      const result = extractResponseText(model.provider, data);
+
+      if (!result) {
+        logger.warn('ai', `${model.displayName} returned empty content, rotating`);
+        lastError = new Error(`${model.displayName} returned empty response`);
+        rotateModel();
+        continue;
+      }
+
+      resetFailures();
+      const totalDuration = Date.now() - start;
+      logger.info('ai', `${model.displayName} response received (${result.length} chars, ${totalDuration}ms)`);
+      return result;
+
+    } catch (err: any) {
+      // Network / fetch errors — rotate
+      if (!err.message?.startsWith('API Error')) {
+        logger.error('ai', `${model.displayName} network error`, err.message);
+        lastError = err;
+        rotateModel();
+        continue;
+      }
+      throw err;
+    }
   }
 
-  logger.info('claude', `Calling Claude (${CLAUDE_MODEL})`, prompt.substring(0, 120) + '...');
-
-  const response = await fetch(API_PROXY_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-
-  const duration = Date.now() - start;
-  logger.api('POST', API_PROXY_URL, response.status, duration);
-
-  if (!response.ok) {
-    const errText = await response.text();
-    logger.error('claude', `Claude API error ${response.status}`, errText);
-    throw new Error(`API Error ${response.status}: ${errText}`);
-  }
-
-  const data: ClaudeResponse = await response.json();
-
-  if (data.error) {
-    logger.error('claude', `Claude returned error`, data.error.message);
-    throw new Error(`Claude Error: ${data.error.message}`);
-  }
-
-  const textBlocks = (data.content || []).filter((b) => b.type === 'text');
-  const result = textBlocks.map((b) => b.text || '').join('\n');
-  logger.info('claude', `Claude response received (${result.length} chars, ${duration}ms)`);
-  return result;
+  throw lastError || new Error('All AI providers failed');
 };
+
+// Backwards-compatible alias
+const callClaude = callAI;
 
 // --- RETRY WRAPPER ---
 

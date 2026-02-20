@@ -720,13 +720,13 @@ const App: React.FC = () => {
     }
   };
 
-  const cleanModelName = modelName.replace('claude-', '').replace('-20250514', '');
+  const cleanModelName = modelName;
 
   return (
     <div className="flex min-h-screen bg-slate-50 text-slate-900 font-sans">
       <div className="fixed top-0 left-0 right-0 bg-indigo-900 text-indigo-100 text-[10px] font-bold text-center py-1 z-[9999] flex items-center justify-center gap-2 shadow-sm border-b border-indigo-800">
           <Zap size={10} className="text-yellow-400 fill-yellow-400" />
-          <span>Powered by Claude AI: <span className="text-white font-mono">{cleanModelName}</span></span>
+          <span>AI Model: <span className="text-white font-mono">{cleanModelName}</span></span>
       </div>
       <aside className={`${isSidebarOpen ? 'w-64' : 'w-20'} bg-slate-900 text-slate-300 transition-all duration-300 flex flex-col fixed h-full z-10 shadow-2xl pt-6`}>
         <div className="p-6 flex items-center gap-3 text-white font-bold text-xl border-b border-slate-800">
