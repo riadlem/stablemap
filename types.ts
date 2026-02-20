@@ -89,6 +89,7 @@ export interface Company {
   jobs?: Job[];
   recentNews?: NewsItem[];
   funding?: FundingInfo;
+  addedAt?: string; // ISO timestamp for "sort by last added"
 }
 
 export interface ShareConfig {

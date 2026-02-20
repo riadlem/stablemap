@@ -70,6 +70,50 @@ const App: React.FC = () => {
     setModelName(getCurrentModelName());
   }, []);
 
+  // Ensure bidirectional partner relationships:
+  // If company A lists company B as partner, company B should also list company A.
+  const ensureBidirectionalPartners = (allCompanies: Company[]): Company[] => {
+    const compMap = new Map<string, Company>(allCompanies.map(c => [c.id, { ...c }]));
+
+    for (const company of allCompanies) {
+      for (const partner of company.partners || []) {
+        const partnerId = generateCompanyId(partner.name);
+        const partnerCompany = compMap.get(partnerId);
+        if (!partnerCompany) continue; // partner not in directory
+
+        const alreadyLinked = partnerCompany.partners.some(
+          p => p.name.toLowerCase() === company.name.toLowerCase()
+        );
+        if (!alreadyLinked) {
+          // Determine reverse partner type
+          let reverseType: Partner['type'] = 'CryptoNative';
+          if (partner.type === 'Investor') {
+            // If A lists B as Investor, B should list A as CryptoNative (portfolio company)
+            reverseType = 'CryptoNative';
+          } else if (partner.type === 'Fortune500Global') {
+            reverseType = 'CryptoNative';
+          } else {
+            // Both are crypto-native peers, or determine from the company's own focus
+            reverseType = company.focus === 'Crypto-Second' ? 'Fortune500Global' : 'CryptoNative';
+          }
+
+          compMap.set(partnerId, {
+            ...partnerCompany,
+            partners: [...partnerCompany.partners, {
+              name: company.name,
+              type: reverseType,
+              description: partner.description || `Partnership with ${company.name}.`,
+              date: partner.date,
+              sourceUrl: partner.sourceUrl,
+            }]
+          });
+        }
+      }
+    }
+
+    return Array.from(compMap.values());
+  };
+
   const syncPartnershipsToNews = async (companyName: string, partners: Partner[]) => {
     const newsItems: NewsItem[] = partners.map((p, idx) => {
         const safeName = companyName.replace(/[^a-zA-Z0-9]/g, '');
@@ -133,8 +177,9 @@ const App: React.FC = () => {
           if (newParts) return { ...c, partners: [...c.partners, ...newParts] };
           return c;
         });
-        db.saveCompanies(mergedCompanies).catch(console.error);
-        return mergedCompanies;
+        const updated = ensureBidirectionalPartners(mergedCompanies);
+        db.saveCompanies(updated).catch(console.error);
+        return updated;
       });
     }
     const now = Date.now();
@@ -272,14 +317,15 @@ const App: React.FC = () => {
     const skeleton: Company = {
       id: newId,
       name: normalizedName,
-      logoPlaceholder: `https://ui-avatars.com/api/?name=${encodeURIComponent(normalizedName)}&background=f8fafc&color=64748b&size=128`, 
+      logoPlaceholder: `https://ui-avatars.com/api/?name=${encodeURIComponent(normalizedName)}&background=f8fafc&color=64748b&size=128`,
       description: 'Fetching intelligence...',
       categories: [Category.INFRASTRUCTURE],
       partners: [],
       website: '',
       headquarters: 'Pending...',
       region: 'Global',
-      focus: 'Crypto-Second' 
+      focus: 'Crypto-Second',
+      addedAt: new Date().toISOString()
     };
     setCompanies(current => {
       const updated = [skeleton, ...current];
@@ -301,7 +347,8 @@ const App: React.FC = () => {
         const finalDescription = enriched.description || 'Basic profile created. Intelligence analysis currently unavailable due to system load.';
 
         setCompanies(current => {
-           const updated = current.map(c => c.id === newId ? { ...c, ...enriched, description: finalDescription, logoPlaceholder: logoUrl } : c);
+           const withEnriched = current.map(c => c.id === newId ? { ...c, ...enriched, description: finalDescription, logoPlaceholder: logoUrl } : c);
+           const updated = ensureBidirectionalPartners(withEnriched);
            db.saveCompanies(updated).catch(console.error);
            return updated;
         });
@@ -358,7 +405,8 @@ const App: React.FC = () => {
       website: '',
       headquarters: 'Pending...',
       region: 'Global',
-      focus: 'Crypto-Second'
+      focus: 'Crypto-Second',
+      addedAt: new Date().toISOString()
     };
     setCompanies(current => {
       const updated = [skeleton, ...current];
@@ -385,9 +433,10 @@ const App: React.FC = () => {
       const finalDescription = enriched.description || 'Basic profile created. Intelligence analysis currently unavailable due to system load.';
 
       setCompanies(current => {
-        const updated = current.map(c =>
+        const withEnriched = current.map(c =>
           c.id === newId ? { ...c, ...enriched, partners: mergedPartners, description: finalDescription, logoPlaceholder: logoUrl } : c
         );
+        const updated = ensureBidirectionalPartners(withEnriched);
         db.saveCompanies(updated).catch(console.error);
         return updated;
       });
@@ -477,7 +526,8 @@ const App: React.FC = () => {
           website: '',
           headquarters: '',
           region: 'Global',
-          focus: 'Crypto-Second'
+          focus: 'Crypto-Second',
+          addedAt: new Date().toISOString()
       }));
       setCompanies(prev => {
           const updated = [...skeletons, ...prev];
@@ -495,7 +545,8 @@ const App: React.FC = () => {
               }
               const finalDescription = enriched.description || 'Intelligence unavailable. Click Refresh to retry.';
               setCompanies(current => {
-                  const updated = current.map(c => c.id === skel.id ? { ...c, ...enriched, description: finalDescription, logoPlaceholder: logoUrl } : c);
+                  const withEnriched = current.map(c => c.id === skel.id ? { ...c, ...enriched, description: finalDescription, logoPlaceholder: logoUrl } : c);
+                  const updated = ensureBidirectionalPartners(withEnriched);
                   db.saveCompanies(updated).catch(console.error);
                   return updated;
               });
@@ -589,7 +640,12 @@ const App: React.FC = () => {
               const domain = enriched.website.replace(/^https?:\/\//, '').split('/')[0];
               logoUrl = `https://logo.clearbit.com/${domain}`;
           }
-          await handleSingleCompanyUpdate({ ...company, ...enriched, logoPlaceholder: logoUrl });
+          const refreshedCompany = { ...company, ...enriched, logoPlaceholder: logoUrl };
+          const newCompanies = companies.map(c => c.id === refreshedCompany.id ? refreshedCompany : c);
+          const updated = ensureBidirectionalPartners(newCompanies);
+          setCompanies(updated);
+          if (selectedCompany && selectedCompany.id === refreshedCompany.id) setSelectedCompany(refreshedCompany);
+          await db.saveCompanies(updated);
       } catch (e) { alert("Refresh failed. Please try again later."); }
   };
 

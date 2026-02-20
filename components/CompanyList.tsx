@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useRef } from 'react';
 import { Company, Category, CompanyFocus } from '../types';
-import { Building2, Globe, ArrowRight, Tag, MapPin, Search, Sparkles, Upload, FileText, Filter, Plus, X, ScanSearch, Check, LayoutGrid, List, RefreshCcw, GitMerge } from 'lucide-react';
+import { Building2, Globe, ArrowRight, Tag, MapPin, Search, Sparkles, Upload, FileText, Filter, Plus, X, ScanSearch, Check, LayoutGrid, List, RefreshCcw, GitMerge, ArrowUpDown } from 'lucide-react';
 
 interface Recommendation {
     name: string;
@@ -42,6 +42,7 @@ const CompanyList: React.FC<CompanyListProps> = ({ companies, onSelectCompany, o
   const [newCompanyName, setNewCompanyName] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [sortBy, setSortBy] = useState<'az' | 'lastAdded' | 'mostPartners'>('az');
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   // Recommendation State
@@ -91,10 +92,21 @@ const CompanyList: React.FC<CompanyListProps> = ({ companies, onSelectCompany, o
       || (regionFilter === 'MEA' && (c.region === 'MEA' || c.region === 'EMEA'))
       || c.region === regionFilter;
     const focusMatch = focusFilter === 'All' || c.focus === focusFilter;
-    const searchMatch = !searchTerm || 
-                        c.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+    const searchMatch = !searchTerm ||
+                        c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                         c.description.toLowerCase().includes(searchTerm.toLowerCase());
     return catMatch && regionMatch && focusMatch && searchMatch;
+  }).sort((a, b) => {
+    if (sortBy === 'lastAdded') {
+      const dateA = a.addedAt ? new Date(a.addedAt).getTime() : 0;
+      const dateB = b.addedAt ? new Date(b.addedAt).getTime() : 0;
+      return dateB - dateA; // newest first
+    }
+    if (sortBy === 'mostPartners') {
+      return (b.partners?.length || 0) - (a.partners?.length || 0);
+    }
+    // default: A-Z
+    return a.name.localeCompare(b.name);
   });
 
   const handleAddSubmit = (e: React.FormEvent) => {
@@ -327,15 +339,28 @@ const CompanyList: React.FC<CompanyListProps> = ({ companies, onSelectCompany, o
             </select>
         </div>
 
+        <div className="flex items-center gap-2 px-2 border-l border-slate-100">
+            <ArrowUpDown size={16} className="text-slate-400" />
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as 'az' | 'lastAdded' | 'mostPartners')}
+              className="text-sm bg-transparent outline-none text-slate-700 border-none focus:ring-0 cursor-pointer py-2 font-medium"
+            >
+              <option value="az">A → Z</option>
+              <option value="lastAdded">Last Added</option>
+              <option value="mostPartners">Most Partners</option>
+            </select>
+        </div>
+
         <div className="flex items-center border-l border-slate-100 pl-2 gap-1">
-            <button 
+            <button
               onClick={() => setViewMode('grid')}
               className={`p-2 rounded-lg transition-colors ${viewMode === 'grid' ? 'bg-indigo-50 text-indigo-600' : 'text-slate-400 hover:bg-slate-50'}`}
               title="Grid View"
             >
                 <LayoutGrid size={18} />
             </button>
-            <button 
+            <button
               onClick={() => setViewMode('list')}
               className={`p-2 rounded-lg transition-colors ${viewMode === 'list' ? 'bg-indigo-50 text-indigo-600' : 'text-slate-400 hover:bg-slate-50'}`}
               title="List View"
