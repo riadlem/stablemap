@@ -27,7 +27,7 @@ import Investors from './components/Investors';
 import VCPortfolioImport from './components/VCPortfolioImport';
 import ShareModal from './components/ShareModal';
 import { Company, Partner, NewsItem, Category } from './types';
-import { enrichCompanyData, scanForNewPartnerships, recommendMissingCompanies, getCurrentModelName, fetchUrlContent, analyzeNewsForCompanies, analyzeNewsRelationships } from "./services/claudeService";
+import { enrichCompanyData, scanForNewPartnerships, recommendMissingCompanies, getCurrentModelName, fetchUrlContent, analyzeNewsForCompanies, analyzeNewsRelationships, scanAndFixCentralBanks } from "./services/claudeService";
 import { db } from './services/db';
 
 enum View {
@@ -716,6 +716,56 @@ const App: React.FC = () => {
 
   const handleShare = (company: Company) => { setCompanyToShare(company); setShareModalOpen(true); };
 
+  const handleScanCentralBanks = async (): Promise<{ fixedCount: number; addedCount: number }> => {
+    const { fixed, discovered } = await scanAndFixCentralBanks(companies);
+    // Count how many companies had their categories changed
+    const fixedCount = fixed.filter((c, i) =>
+      JSON.stringify(c.categories) !== JSON.stringify(companies[i]?.categories) ||
+      c.website !== companies[i]?.website
+    ).length;
+    // Enrich and add discovered central banks
+    let addedCount = 0;
+    const existingNames = new Set(fixed.map(c => c.name.toLowerCase()));
+    const newCompanies = [...fixed];
+    for (const cb of discovered) {
+      if (!cb.name || existingNames.has(cb.name.toLowerCase())) continue;
+      try {
+        const enriched = await enrichCompanyData(cb.name);
+        // Force Central Banks category even if enrichment doesn't detect it
+        const categories = enriched.categories || cb.categories || [];
+        if (!categories.includes('Central Banks' as any)) categories.push('Central Banks' as any);
+        const id = cb.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+        const website = enriched.website || cb.website || '';
+        const domain = website ? website.replace(/^https?:\/\//, '').split('/')[0] : '';
+        const logoPlaceholder = domain
+          ? `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=128`
+          : `https://ui-avatars.com/api/?name=${encodeURIComponent(cb.name)}&background=f8fafc&color=64748b&size=128`;
+        newCompanies.push({
+          id,
+          name: cb.name,
+          description: enriched.description || cb.description || '',
+          categories,
+          website,
+          headquarters: enriched.headquarters || cb.headquarters || '',
+          country: enriched.country || cb.country || '',
+          region: enriched.region || cb.region || 'Global',
+          focus: enriched.focus || 'Crypto-Second',
+          industry: enriched.industry || 'Central Banking',
+          partners: enriched.partners || [],
+          logoPlaceholder,
+          addedAt: new Date().toISOString(),
+        } as any);
+        existingNames.add(cb.name.toLowerCase());
+        addedCount++;
+      } catch (err) {
+        console.error(`Failed to enrich central bank ${cb.name}`, err);
+      }
+    }
+    setCompanies(newCompanies);
+    await db.saveCompanies(newCompanies);
+    return { fixedCount, addedCount };
+  };
+
   const renderContent = () => {
     if (isAppLoading) return (
         <div className="flex flex-col items-center justify-center h-[60vh] text-slate-400">
@@ -727,7 +777,7 @@ const App: React.FC = () => {
         <CompanyDetail company={selectedCompany} onBack={() => setSelectedCompany(null)} onShare={handleShare} onUpdateCompany={handleSingleCompanyUpdate} onRefresh={handleRefreshCompany} onDelete={handleDeleteCompany} onEditName={handleEditCompanyName} onAddNews={handleManualNewsAdd} allCompanyIds={new Set(companies.map(c => c.id))} allCompanyNames={companies.map(c => c.name)} onAddCompanyToDirectory={handleAddCompany} />
     );
     switch (currentView) {
-      case View.DIRECTORY: return <CompanyList companies={companies} onSelectCompany={setSelectedCompany} onAddCompany={handleAddCompany} onImportCompanies={handleImportCompanies} isAdding={addingCompany} onRefreshPending={handleRefreshPending} isRefreshingPending={isRefreshingPending} onScanRecommendations={handleScanRecommendations} onMergeDuplicates={handleMergeDuplicates} />;
+      case View.DIRECTORY: return <CompanyList companies={companies} onSelectCompany={setSelectedCompany} onAddCompany={handleAddCompany} onImportCompanies={handleImportCompanies} isAdding={addingCompany} onRefreshPending={handleRefreshPending} isRefreshingPending={isRefreshingPending} onScanRecommendations={handleScanRecommendations} onMergeDuplicates={handleMergeDuplicates} onScanCentralBanks={handleScanCentralBanks} />;
       case View.PARTNERSHIPS_GLOBAL: return <GlobalPartnershipMatrix companies={companies} />;
       case View.INTELLIGENCE: return <Intelligence directoryCompanies={companies.map(c => c.name)} companies={companies} />;
       case View.JOBS: return <JobBoard companies={companies} onUpdateCompanies={handleCompaniesUpdate} />;

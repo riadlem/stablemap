@@ -17,6 +17,7 @@ interface CompanyListProps {
   onSelectCompany: (c: Company) => void;
   onAddCompany: (name: string) => void;
   onImportCompanies: (names: string[]) => void;
+  onScanCentralBanks?: () => Promise<{ fixedCount: number; addedCount: number }>;
   isAdding: boolean;
   onRefreshPending: () => Promise<void>;
   isRefreshingPending: boolean;
@@ -39,7 +40,7 @@ const FocusBadge: React.FC<{ focus: CompanyFocus }> = ({ focus }) => {
   );
 };
 
-const CompanyList: React.FC<CompanyListProps> = ({ companies, onSelectCompany, onAddCompany, onImportCompanies, isAdding, onRefreshPending, isRefreshingPending, onScanRecommendations, onMergeDuplicates }) => {
+const CompanyList: React.FC<CompanyListProps> = ({ companies, onSelectCompany, onAddCompany, onImportCompanies, isAdding, onRefreshPending, isRefreshingPending, onScanRecommendations, onMergeDuplicates, onScanCentralBanks }) => {
   const [filter, setFilter] = useState<Category | 'All'>('All');
   const [regionFilter, setRegionFilter] = useState<string>('All');
   const [focusFilter, setFocusFilter] = useState<CompanyFocus | 'All'>('All');
@@ -56,6 +57,10 @@ const CompanyList: React.FC<CompanyListProps> = ({ companies, onSelectCompany, o
   // Merge Duplicates State
   const [isMerging, setIsMerging] = useState(false);
   const [mergeResult, setMergeResult] = useState<string | null>(null);
+
+  // Central Bank Scan State
+  const [isScanningCBs, setIsScanningCBs] = useState(false);
+  const [cbScanResult, setCbScanResult] = useState<string | null>(null);
 
   // Expanded entity groups
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
@@ -320,7 +325,7 @@ const CompanyList: React.FC<CompanyListProps> = ({ companies, onSelectCompany, o
             {isMerging ? 'Merging...' : 'Merge Duplicates'}
           </button>
 
-          <button 
+          <button
             onClick={handleScanClick}
             disabled={isScanning}
             className="flex items-center gap-2 px-3 py-2 bg-indigo-50 border border-indigo-100 text-indigo-700 rounded-lg text-sm font-medium hover:bg-indigo-100 transition-colors shadow-sm whitespace-nowrap disabled:opacity-50"
@@ -328,6 +333,33 @@ const CompanyList: React.FC<CompanyListProps> = ({ companies, onSelectCompany, o
             <ScanSearch size={16} className={isScanning ? "animate-spin" : ""} />
             {isScanning ? 'Scanning News...' : 'Find Missing'}
           </button>
+
+          {onScanCentralBanks && (
+            <button
+              onClick={async () => {
+                setIsScanningCBs(true);
+                setCbScanResult(null);
+                try {
+                  const result = await onScanCentralBanks();
+                  const parts = [];
+                  if (result.fixedCount > 0) parts.push(`Fixed ${result.fixedCount} misclassified`);
+                  if (result.addedCount > 0) parts.push(`Added ${result.addedCount} central bank${result.addedCount > 1 ? 's' : ''}`);
+                  setCbScanResult(parts.length > 0 ? parts.join(', ') + '.' : 'All central banks up to date.');
+                } catch (e) {
+                  setCbScanResult('Scan failed. Please try again.');
+                } finally {
+                  setIsScanningCBs(false);
+                  setTimeout(() => setCbScanResult(null), 5000);
+                }
+              }}
+              disabled={isScanningCBs}
+              className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 text-amber-700 rounded-lg text-sm font-medium hover:bg-amber-100 transition-colors shadow-sm whitespace-nowrap disabled:opacity-50"
+              title="Fix misclassified central banks and discover real ones"
+            >
+              <Building2 size={16} className={isScanningCBs ? "animate-pulse" : ""} />
+              {isScanningCBs ? 'Scanning...' : 'Scan Central Banks'}
+            </button>
+          )}
 
           <form onSubmit={handleAddSubmit} className="flex gap-2 w-full md:w-auto">
             <input 
@@ -353,6 +385,13 @@ const CompanyList: React.FC<CompanyListProps> = ({ companies, onSelectCompany, o
       {mergeResult && (
         <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-3 text-sm text-emerald-800 font-medium flex items-center gap-2 animate-in fade-in duration-200">
           <GitMerge size={16} /> {mergeResult}
+        </div>
+      )}
+
+      {/* Central Bank Scan Result */}
+      {cbScanResult && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-800 font-medium flex items-center gap-2 animate-in fade-in duration-200">
+          <Building2 size={16} /> {cbScanResult}
         </div>
       )}
 

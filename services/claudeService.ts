@@ -132,9 +132,30 @@ const callAI = async (prompt: string, systemPrompt?: string): Promise<string> =>
 
 // --- TEXT PARSING HELPERS ---
 
+// Sanitize a website URL: fix double TLDs (.com.com), ensure https, strip junk
+const sanitizeWebsite = (raw: string): string => {
+  if (!raw || raw === 'unknown') return '';
+  let url = raw.trim();
+  // Remove duplicate TLD extensions (e.g. .com.com, .io.io, .org.org, .co.co)
+  url = url.replace(/\.(com|io|org|co|net|gov|ai|xyz|finance|money|app)(\.\1)+/gi, '.$1');
+  // Ensure https prefix
+  if (url && !url.startsWith('http')) url = `https://${url}`;
+  // Strip trailing slashes
+  url = url.replace(/\/+$/, '');
+  // Validate it parses as a URL
+  try {
+    new URL(url);
+    return url;
+  } catch {
+    return '';
+  }
+};
+
 // Detect company categories from text based on keyword matching
-const categorizeFromText = (text: string): Category[] => {
+// companyName is optional — when provided, Central Banks check validates the name itself
+const categorizeFromText = (text: string, companyName?: string): Category[] => {
   const lower = text.toLowerCase();
+  const nameLower = (companyName || '').toLowerCase();
   const cats: Category[] = [];
 
   if (/stablecoin|issuer|usdc|usdt|fiat-backed|mint(?:ing)?\b/.test(lower))
@@ -149,8 +170,20 @@ const categorizeFromText = (text: string): Category[] => {
     cats.push(Category.DEFI);
   if (/\bcustody\b|safekeeping|digital vault|qualified custodian/.test(lower))
     cats.push(Category.CUSTODY);
-  if (/central bank|cbdc|monetary authority|reserve bank/.test(lower))
+
+  // Central Banks: require strong signals — the company itself must BE a central bank,
+  // not merely mention or partner with one. Check the company name for telltale patterns.
+  const isCentralBankByName =
+    /central bank|monetary authority|reserve bank|banque centrale|banco central|bank of (?:england|japan|canada|korea|israel|thailand|ghana|jamaica|bahamas|nigeria|india)/i.test(nameLower) ||
+    /\b(?:fed(?:eral)?\s+reserve|ecb|bce|pboc|rbi|boj|boe|snb|rba|mas)\b/i.test(nameLower);
+  const isCentralBankByText =
+    // The text must describe the entity as a central bank, not just reference one
+    /(?:is|as)\s+(?:a|the)\s+central bank/i.test(lower) ||
+    /(?:is|as)\s+(?:a|the)\s+monetary authority/i.test(lower) ||
+    /(?:country'?s|nation'?s)\s+central bank/i.test(lower);
+  if (isCentralBankByName || isCentralBankByText)
     cats.push(Category.CENTRAL_BANKS);
+
   if (/venture capital|\bvc\b|crypto fund|investment fund|private equity/.test(lower))
     cats.push(Category.VC);
   if (/consult|advisory|professional services|\bpwc\b|\bdeloitte\b|\bey\b|\baccenture\b|\bmckinsey\b/.test(lower))
@@ -554,10 +587,10 @@ export const enrichCompanyData = async (
         description = descLines.join('\n').trim();
       }
 
-      // Extract website
-      const websiteMatch = metaPart.match(/WEBSITE:\s*(https?:\/\/[^\s]+)/i);
+      // Extract website — also try without protocol prefix
+      const websiteMatch = metaPart.match(/WEBSITE:\s*(https?:\/\/[^\s]+|[a-z0-9][\w.-]+\.[a-z]{2,})/i);
       if (websiteMatch && !websiteMatch[1].includes('unknown')) {
-        website = websiteMatch[1].trim();
+        website = sanitizeWebsite(websiteMatch[1]);
       }
 
       // Extract AI-identified partners
@@ -621,12 +654,12 @@ export const enrichCompanyData = async (
       );
       if (websiteResult) {
         const domain = websiteResult.displayLink.replace(/^www\./, '');
-        website = domain.includes('vertexaisearch') ? '' : `https://${domain}`;
+        website = domain.includes('vertexaisearch') ? '' : sanitizeWebsite(domain);
       }
     }
 
     // Determine categories, focus, location, industry
-    const categories = categorizeFromText(allText);
+    const categories = categorizeFromText(allText, companyName);
     const focus = determineFocus(allText, companyName);
     const { headquarters, country, region } = extractLocationFromText(allText);
     const industry = determineIndustry(allText);
@@ -1194,7 +1227,7 @@ export const lookupInvestorPortfolio = async (
 
       // Try to determine category from context
       const contextText = context ? `${context.title} ${context.snippet}` : '';
-      const cats = categorizeFromText(contextText);
+      const cats = categorizeFromText(contextText, name);
       const category = cats.length > 0 ? cats[0] : 'Other';
 
       // Try to extract funding stage
@@ -1255,7 +1288,7 @@ export const extractPortfolioFromText = async (
       const contextEnd = Math.min(truncated.length, nameIdx + name.length + 200);
       const context = nameIdx >= 0 ? truncated.substring(contextStart, contextEnd) : '';
 
-      const cats = categorizeFromText(context);
+      const cats = categorizeFromText(context, name);
       const category = cats.length > 0 ? cats[0] : 'Other';
 
       const stageMatch = context.match(/(Seed|Pre-Seed|Series [A-F]|Growth)/i);
@@ -1353,4 +1386,90 @@ export const analyzeNewsRelationships = async (
   }
 
   return relationships;
+};
+
+// Fix misclassified Central Banks and find real ones via web search.
+// 1. Removes "Central Banks" category from companies whose name doesn't match.
+// 2. Searches the web for actual central banks exploring CBDCs / stablecoins.
+// Returns { fixed: companies with corrected categories, discovered: new central bank entries }
+export const scanAndFixCentralBanks = async (
+  companies: Company[]
+): Promise<{ fixed: Company[]; discovered: Partial<Company>[] }> => {
+  const centralBankNamePattern =
+    /central bank|monetary authority|reserve bank|banque centrale|banco central|bank of (?:england|japan|canada|korea|israel|thailand|ghana|jamaica|bahamas|nigeria|india|mexico|france|russia|china)|people'?s bank|european central|bundesbank|banque de france|bank negara|bangko sentral|bank indonesia|south african reserve|swiss national bank|norges bank|riksbank|Danmarks Nationalbank/i;
+  const centralBankAbbrevPattern =
+    /\b(?:fed(?:eral)?\s+reserve|ecb|bce|pboc|rbi|boj|boe|snb|rba|mas|hkma|bsp|bis)\b/i;
+
+  // Step 1: Fix misclassified companies — remove Central Banks tag if name doesn't match
+  const fixed = companies.map(c => {
+    if (!c.categories?.includes(Category.CENTRAL_BANKS)) return c;
+    const nameMatches = centralBankNamePattern.test(c.name) || centralBankAbbrevPattern.test(c.name);
+    const descMatches = c.description &&
+      (/(?:is|as)\s+(?:a|the)\s+central bank/i.test(c.description) ||
+       /(?:is|as)\s+(?:a|the)\s+monetary authority/i.test(c.description));
+    if (nameMatches || descMatches) return c; // Correctly classified
+    // Remove the Central Banks tag
+    logger.info('general', `Removing "Central Banks" tag from "${c.name}" — not a central bank`);
+    const newCategories = c.categories.filter(cat => cat !== Category.CENTRAL_BANKS);
+    if (newCategories.length === 0) newCategories.push(Category.INFRASTRUCTURE as any);
+    return { ...c, categories: newCategories };
+  });
+
+  // Also fix any .com.com URLs while we're at it
+  const urlFixed = fixed.map(c => {
+    if (!c.website) return c;
+    const cleaned = sanitizeWebsite(c.website);
+    if (cleaned !== c.website) {
+      logger.info('general', `Fixed URL for "${c.name}": "${c.website}" → "${cleaned}"`);
+      return { ...c, website: cleaned };
+    }
+    return c;
+  });
+
+  // Step 2: Search for real central banks exploring digital currencies / CBDCs
+  const existingNames = new Set(companies.map(c => c.name.toLowerCase()));
+  const discovered: Partial<Company>[] = [];
+
+  try {
+    const { results } = await searchWebFull(
+      'central bank CBDC digital currency stablecoin pilot program 2024 2025',
+      { num: 10 }
+    );
+
+    // Use AI to extract central bank names from results
+    const searchContext = results.slice(0, 8).map(r =>
+      `[${r.title}] ${r.snippet}`
+    ).join('\n');
+
+    const aiResponse = await callAI(
+      `From these search results, list ONLY actual central banks (not commercial banks, not fintech companies) that are actively exploring or piloting CBDCs or digital currencies.\n\nSearch results:\n${searchContext}\n\nRespond with one central bank per line in this format:\nNAME | COUNTRY | ACTIVITY\n\nExample:\nBank of England | United Kingdom | Exploring a digital pound (Britcoin) CBDC\n\nRules:\n- ONLY real central banks or monetary authorities\n- Do NOT include commercial banks, fintech companies, or crypto companies\n- Include the full official name\n- Max 15 entries`,
+      'You identify central banks from search results. Only list genuine central banks or monetary authorities.'
+    );
+
+    const lines = aiResponse.split('\n').filter(l => l.includes('|'));
+    for (const line of lines) {
+      const [name, country, activity] = line.split('|').map(s => s.trim());
+      if (!name || name.length < 3 || name.length > 80) continue;
+      if (existingNames.has(name.toLowerCase())) continue;
+      // Verify it matches central bank naming patterns
+      if (!centralBankNamePattern.test(name) && !centralBankAbbrevPattern.test(name)) continue;
+
+      discovered.push({
+        name,
+        description: activity || `${name} is exploring digital currency initiatives.`,
+        categories: [Category.CENTRAL_BANKS],
+        headquarters: country || '',
+        country: country || '',
+        region: 'Global',
+        focus: 'Crypto-Second' as any,
+        website: '',
+        partners: [],
+      });
+      existingNames.add(name.toLowerCase()); // prevent duplicates within results
+    }
+  } catch (err) {
+    logger.warn('general', 'Central bank web scan failed — returning fixes only');
+  }
+
+  return { fixed: urlFixed, discovered };
 };
