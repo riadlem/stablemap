@@ -6,7 +6,10 @@ export enum Category {
   PAYMENTS = 'Payments',
   DEFI = 'DeFi',
   CUSTODY = 'Custody',
-  BANKS = 'Banks'
+  BANKS = 'Banks',
+  CENTRAL_BANKS = 'Central Banks',
+  VC = 'VC',
+  CONSULTANCY = 'Consultancy'
 }
 
 export type CompanyFocus = 'Crypto-First' | 'Crypto-Second';
@@ -90,6 +93,7 @@ export interface Company {
   recentNews?: NewsItem[];
   funding?: FundingInfo;
   addedAt?: string; // ISO timestamp for "sort by last added"
+  parentCompany?: string; // Name of parent company for local entity grouping (e.g. "PwC" for "PwC India")
 }
 
 export interface ShareConfig {

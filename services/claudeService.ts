@@ -203,7 +203,8 @@ This company may be crypto-native, a traditional enterprise with blockchain/cryp
 
 I need a JSON object with these fields:
 - "description": string (2-3 sentence company overview — be SPECIFIC: name their core product/service, what differentiates them from competitors, and their unique value proposition. NEVER use generic phrases like "enterprise-grade solutions", "enabling institutions to integrate blockchain", or "secure, compliant infrastructure" — instead describe the actual product, protocol, or service they offer and what makes them distinct)
-- "categories": string[] (from: "Issuer", "Infrastructure", "Wallet", "Payments", "DeFi", "Custody", "Banks")
+- "categories": string[] (from: "Issuer", "Infrastructure", "Wallet", "Payments", "DeFi", "Custody", "Banks", "Central Banks", "VC", "Consultancy" — use "Central Banks" for central banks and monetary authorities like ECB, Fed, Bank of England; use "VC" for venture capital firms, crypto funds, and investment firms; use "Consultancy" for consulting firms like McKinsey, PwC, Deloitte, EY, Accenture)
+- "parentCompany": string | null (if this is a local/regional entity of a larger company, return the parent name — e.g. "PwC" for "PwC India", "Deloitte" for "Deloitte Germany". But do NOT set this for distinct business units like "Coinbase Ventures" under "Coinbase" — those are separate entities. Only use for geographic subsidiaries.)
 - "partners": array of objects with { "name": string, "type": "Fortune500Global" | "CryptoNative" | "Investor", "description": string, "date": string (YYYY-MM-DD if known), "sourceUrl": string (if known), "country": string (HQ country, e.g. "USA", "Germany", "Japan"), "region": "North America" | "Europe" | "APAC" | "LATAM" | "MEA" | "Global", "industry": string (e.g. "Financial Services", "Automotive", "Technology", "Energy", "Electronics") }
   (use type "Investor" for VC firms, PE firms, and investment funds that have invested in the company; use "Fortune500Global" for enterprise/corporate partners; use "CryptoNative" for crypto-native company partners)
 - "website": string (official URL)
@@ -232,11 +233,14 @@ RETURN ONLY RAW JSON. No markdown. No explanation.`;
         json.categories.forEach((c: string) => {
           if (typeof c !== 'string') return;
           const up = c.toUpperCase();
-          if (up.includes('ISSUER')) mappedCategories.push(Category.ISSUER);
+          if (up.includes('CENTRAL BANK') || up === 'CENTRAL BANKS') mappedCategories.push(Category.CENTRAL_BANKS);
+          else if (up.includes('ISSUER')) mappedCategories.push(Category.ISSUER);
           else if (up.includes('INFRA')) mappedCategories.push(Category.INFRASTRUCTURE);
           else if (up.includes('PAY')) mappedCategories.push(Category.PAYMENTS);
           else if (up.includes('DEFI')) mappedCategories.push(Category.DEFI);
           else if (up.includes('CUSTODY')) mappedCategories.push(Category.CUSTODY);
+          else if (up.includes('CONSULT')) mappedCategories.push(Category.CONSULTANCY);
+          else if (up === 'VC' || up.includes('VENTURE CAPITAL')) mappedCategories.push(Category.VC);
           else if (up.includes('BANK')) mappedCategories.push(Category.BANKS);
           else if (up.includes('WALLET')) mappedCategories.push(Category.WALLET);
         });
@@ -253,6 +257,7 @@ RETURN ONLY RAW JSON. No markdown. No explanation.`;
         categories: mappedCategories.length > 0 ? mappedCategories : [Category.INFRASTRUCTURE],
         partners: Array.isArray(json.partners) ? json.partners.filter((p: any) => p && typeof p.name === 'string') : [],
         funding: json.funding || undefined,
+        parentCompany: typeof json.parentCompany === 'string' ? json.parentCompany : undefined,
       };
     });
   } catch (error) {

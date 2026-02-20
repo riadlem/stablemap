@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useRef } from 'react';
 import { Company, Category, CompanyFocus } from '../types';
-import { Building2, Globe, ArrowRight, Tag, MapPin, Search, Sparkles, Upload, FileText, Filter, Plus, X, ScanSearch, Check, LayoutGrid, List, RefreshCcw, GitMerge, ArrowUpDown } from 'lucide-react';
+import { Building2, Globe, ArrowRight, Tag, MapPin, Search, Sparkles, Upload, FileText, Filter, Plus, X, ScanSearch, Check, LayoutGrid, List, RefreshCcw, GitMerge, ArrowUpDown, ChevronDown, ChevronRight } from 'lucide-react';
 
 interface Recommendation {
     name: string;
@@ -52,6 +52,9 @@ const CompanyList: React.FC<CompanyListProps> = ({ companies, onSelectCompany, o
   // Merge Duplicates State
   const [isMerging, setIsMerging] = useState(false);
   const [mergeResult, setMergeResult] = useState<string | null>(null);
+
+  // Expanded entity groups
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
   // Hierarchical region filter options
   const REGION_OPTIONS = [
@@ -108,6 +111,85 @@ const CompanyList: React.FC<CompanyListProps> = ({ companies, onSelectCompany, o
     // default: A-Z
     return a.name.localeCompare(b.name);
   });
+
+  // Entity grouping: group local entities under parent companies
+  // Exclusion list: these pairs should remain separate even if name-matching would group them
+  const SEPARATE_ENTITIES: Record<string, string[]> = {
+    'Coinbase': ['Coinbase Ventures'],
+  };
+
+  interface GroupedEntry {
+    company: Company;
+    subsidiaries: Company[];
+  }
+
+  const groupedFiltered = useMemo((): GroupedEntry[] => {
+    const nameMap = new Map<string, Company>();
+    filtered.forEach(c => nameMap.set(c.name, c));
+
+    const assigned = new Set<string>();
+    const groups: GroupedEntry[] = [];
+
+    // First pass: identify parent companies and their subsidiaries
+    const parentToSubs = new Map<string, Company[]>();
+
+    for (const company of filtered) {
+      if (assigned.has(company.id)) continue;
+
+      // Check explicit parentCompany field
+      let parentName = company.parentCompany;
+
+      // Auto-detect: if company name starts with another company's name + space
+      if (!parentName) {
+        for (const [otherName] of nameMap) {
+          if (otherName === company.name) continue;
+          if (company.name.startsWith(otherName + ' ') && company.name !== otherName) {
+            // Check exclusion list
+            const excluded = SEPARATE_ENTITIES[otherName];
+            if (excluded && excluded.includes(company.name)) continue;
+            parentName = otherName;
+            break;
+          }
+        }
+      }
+
+      if (parentName) {
+        const subs = parentToSubs.get(parentName) || [];
+        subs.push(company);
+        parentToSubs.set(parentName, subs);
+        assigned.add(company.id);
+      }
+    }
+
+    // Second pass: build grouped entries
+    for (const company of filtered) {
+      if (assigned.has(company.id)) continue;
+
+      const subs = parentToSubs.get(company.name) || [];
+      groups.push({ company, subsidiaries: subs });
+    }
+
+    // Handle orphan subsidiaries whose parent is not in the filtered list
+    for (const [parentName, subs] of parentToSubs) {
+      if (!nameMap.has(parentName)) {
+        // Parent not in current view — show subsidiaries as standalone
+        subs.forEach(sub => {
+          groups.push({ company: sub, subsidiaries: [] });
+        });
+      }
+    }
+
+    return groups;
+  }, [filtered]);
+
+  const toggleGroup = (companyName: string) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(companyName)) next.delete(companyName);
+      else next.add(companyName);
+      return next;
+    });
+  };
 
   const handleAddSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -398,83 +480,137 @@ const CompanyList: React.FC<CompanyListProps> = ({ companies, onSelectCompany, o
       {/* VIEW: GRID */}
       {viewMode === 'grid' && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filtered.length === 0 ? (
+          {groupedFiltered.length === 0 ? (
              <div className="col-span-full py-12 text-center text-slate-500 flex flex-col items-center">
                 <FileText size={48} className="text-slate-300 mb-3" />
                 <p className="font-medium">No companies found matching your criteria.</p>
                 <p className="text-xs mt-1">Try adjusting your filters or adding a new company.</p>
              </div>
           ) : (
-            filtered.map(company => (
-              <div 
-                key={company.id} 
-                onClick={() => onSelectCompany(company)}
-                className="group bg-white rounded-xl border border-slate-200 p-5 shadow-sm hover:shadow-md hover:border-indigo-300 transition-all cursor-pointer flex flex-col h-full"
-              >
-                <div className="flex justify-between items-start mb-4">
-                  <div className="flex items-center gap-3">
-                    <img 
-                      src={company.logoPlaceholder} 
-                      alt={company.name} 
-                      loading="lazy"
-                      className="w-10 h-10 rounded-lg bg-white border border-slate-200 object-contain p-0.5" 
-                      onError={(e) => {
-                        const target = e.target as HTMLImageElement;
-                        const avatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(company.name)}&background=f8fafc&color=64748b&size=128`;
-                        
-                        if (target.src.includes('logo.clearbit.com') && company.website) {
-                            const domain = company.website.replace(/^https?:\/\//, '').split('/')[0];
-                            target.src = `https://www.google.com/s2/favicons?domain=${domain}&sz=128`;
-                        } else if (!target.src.includes('ui-avatars.com')) {
-                            target.src = avatarUrl;
-                        }
-                      }}
-                    />
-                    <div>
-                      <h3 className="font-semibold text-slate-900 group-hover:text-indigo-600 transition-colors line-clamp-1">{company.name}</h3>
-                      <div className="flex flex-col gap-1.5 mt-1.5">
-                         <FocusBadge focus={company.focus} />
-                          
-                          {company.headquarters && (
-                            <div className="flex items-center gap-1 text-[10px] text-slate-500 line-clamp-1">
-                                <MapPin size={10} /> {company.headquarters}
-                            </div>
-                          )}
+            groupedFiltered.map(({ company, subsidiaries }) => (
+              <div key={company.id} className="flex flex-col">
+                <div
+                  onClick={() => onSelectCompany(company)}
+                  className="group bg-white rounded-xl border border-slate-200 p-5 shadow-sm hover:shadow-md hover:border-indigo-300 transition-all cursor-pointer flex flex-col h-full"
+                >
+                  <div className="flex justify-between items-start mb-4">
+                    <div className="flex items-center gap-3">
+                      <img
+                        src={company.logoPlaceholder}
+                        alt={company.name}
+                        loading="lazy"
+                        className="w-10 h-10 rounded-lg bg-white border border-slate-200 object-contain p-0.5"
+                        onError={(e) => {
+                          const target = e.target as HTMLImageElement;
+                          const avatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(company.name)}&background=f8fafc&color=64748b&size=128`;
+
+                          if (target.src.includes('logo.clearbit.com') && company.website) {
+                              const domain = company.website.replace(/^https?:\/\//, '').split('/')[0];
+                              target.src = `https://www.google.com/s2/favicons?domain=${domain}&sz=128`;
+                          } else if (!target.src.includes('ui-avatars.com')) {
+                              target.src = avatarUrl;
+                          }
+                        }}
+                      />
+                      <div>
+                        <h3 className="font-semibold text-slate-900 group-hover:text-indigo-600 transition-colors line-clamp-1">{company.name}</h3>
+                        <div className="flex flex-col gap-1.5 mt-1.5">
+                           <FocusBadge focus={company.focus} />
+
+                            {company.headquarters && (
+                              <div className="flex items-center gap-1 text-[10px] text-slate-500 line-clamp-1">
+                                  <MapPin size={10} /> {company.headquarters}
+                              </div>
+                            )}
+                        </div>
                       </div>
                     </div>
+                    <div className="flex items-center gap-2">
+                      {company.website && (
+                        <a href={company.website} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-slate-400 hover:text-indigo-500">
+                          <Globe size={16} />
+                        </a>
+                      )}
+                    </div>
                   </div>
-                  {company.website && (
-                    <a href={company.website} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-slate-400 hover:text-indigo-500">
-                      <Globe size={16} />
-                    </a>
-                  )}
-                </div>
-                
-                <p className="text-slate-600 text-sm mb-4 line-clamp-3 flex-grow leading-relaxed">
-                  {company.description}
-                </p>
 
-                <div className="mt-auto">
-                  <div className="flex flex-wrap gap-2 mb-4">
-                    {company.categories?.slice(0, 3).map(cat => (
-                      <span key={cat} className="inline-flex items-center gap-1 bg-slate-50 text-slate-600 px-2 py-1 rounded text-xs">
-                        <Tag size={10} /> {cat}
+                  <p className="text-slate-600 text-sm mb-4 line-clamp-3 flex-grow leading-relaxed">
+                    {company.description}
+                  </p>
+
+                  <div className="mt-auto">
+                    <div className="flex flex-wrap gap-2 mb-4">
+                      {company.categories?.slice(0, 3).map(cat => (
+                        <span key={cat} className="inline-flex items-center gap-1 bg-slate-50 text-slate-600 px-2 py-1 rounded text-xs">
+                          <Tag size={10} /> {cat}
+                        </span>
+                      ))}
+                      {company.categories?.length > 3 && (
+                        <span className="inline-flex items-center gap-1 bg-slate-50 text-slate-600 px-2 py-1 rounded text-xs">
+                          +{company.categories.length - 3}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="pt-4 border-t border-slate-100 flex justify-between items-center text-xs text-slate-500">
+                      <span className="font-medium">{(company.partners || []).length} Partnerships</span>
+                      <span className="flex items-center gap-1 group-hover:translate-x-1 transition-transform text-indigo-600 font-bold">
+                        View Profile <ArrowRight size={12} />
                       </span>
-                    ))}
-                    {company.categories?.length > 3 && (
-                      <span className="inline-flex items-center gap-1 bg-slate-50 text-slate-600 px-2 py-1 rounded text-xs">
-                        +{company.categories.length - 3}
-                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Subsidiary / Local Entity Toggle */}
+                {subsidiaries.length > 0 && (
+                  <div className="mt-1">
+                    <button
+                      onClick={() => toggleGroup(company.name)}
+                      className="flex items-center gap-1.5 text-[11px] text-slate-500 hover:text-indigo-600 font-medium px-3 py-1.5 transition-colors w-full"
+                    >
+                      {expandedGroups.has(company.name) ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                      {subsidiaries.length} local entit{subsidiaries.length === 1 ? 'y' : 'ies'}
+                    </button>
+                    {expandedGroups.has(company.name) && (
+                      <div className="ml-4 border-l-2 border-indigo-100 pl-3 space-y-2 pb-2">
+                        {subsidiaries.map(sub => (
+                          <div
+                            key={sub.id}
+                            onClick={() => onSelectCompany(sub)}
+                            className="bg-slate-50 rounded-lg border border-slate-150 p-3 hover:bg-white hover:border-indigo-200 transition-all cursor-pointer"
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <img
+                                  src={sub.logoPlaceholder}
+                                  alt={sub.name}
+                                  loading="lazy"
+                                  className="w-6 h-6 rounded bg-white border border-slate-200 object-contain p-0.5"
+                                  onError={(e) => {
+                                    const target = e.target as HTMLImageElement;
+                                    if (!target.src.includes('ui-avatars.com')) {
+                                      target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(sub.name)}&background=f8fafc&color=64748b&size=128`;
+                                    }
+                                  }}
+                                />
+                                <div>
+                                  <span className="text-sm font-medium text-slate-800">{sub.name}</span>
+                                  <span className="inline-flex ml-2 items-center bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide">Local Entity</span>
+                                </div>
+                              </div>
+                              <ArrowRight size={12} className="text-slate-400" />
+                            </div>
+                            {sub.headquarters && (
+                              <div className="flex items-center gap-1 text-[10px] text-slate-500 mt-1.5 ml-8">
+                                <MapPin size={10} /> {sub.headquarters}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
                     )}
                   </div>
-                  
-                  <div className="pt-4 border-t border-slate-100 flex justify-between items-center text-xs text-slate-500">
-                    <span className="font-medium">{(company.partners || []).length} Partnerships</span>
-                    <span className="flex items-center gap-1 group-hover:translate-x-1 transition-transform text-indigo-600 font-bold">
-                      View Profile <ArrowRight size={12} />
-                    </span>
-                  </div>
-                </div>
+                )}
               </div>
             ))
           )}
@@ -497,88 +633,161 @@ const CompanyList: React.FC<CompanyListProps> = ({ companies, onSelectCompany, o
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filtered.length === 0 ? (
+                {groupedFiltered.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="p-12 text-center text-slate-500 font-medium">No companies found.</td>
                   </tr>
                 ) : (
-                  filtered.map(company => (
-                    <tr 
-                      key={company.id} 
-                      onClick={() => onSelectCompany(company)}
-                      className="hover:bg-slate-50 transition-colors cursor-pointer group"
-                    >
-                      <td className="p-4">
-                        <div className="flex items-center gap-3">
-                          <img 
-                            src={company.logoPlaceholder} 
-                            alt={company.name} 
-                            loading="lazy"
-                            className="w-8 h-8 rounded bg-white border border-slate-200 object-contain p-0.5 shrink-0" 
-                            onError={(e) => {
-                              const target = e.target as HTMLImageElement;
-                              // Fallback logic
-                              if (target.src.includes('logo.clearbit.com') && company.website) {
-                                  const domain = company.website.replace(/^https?:\/\//, '').split('/')[0];
-                                  target.src = `https://www.google.com/s2/favicons?domain=${domain}&sz=128`;
-                              } else if (!target.src.includes('ui-avatars.com')) {
-                                  target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(company.name)}&background=f8fafc&color=64748b&size=128`;
-                              }
-                            }}
-                          />
-                          <div>
-                            <div className="font-bold text-slate-900 text-sm">{company.name}</div>
-                            <div className="text-[10px] text-slate-500 line-clamp-1">{company.description.substring(0, 50)}...</div>
+                  groupedFiltered.map(({ company, subsidiaries }) => (
+                    <React.Fragment key={company.id}>
+                      <tr
+                        onClick={() => onSelectCompany(company)}
+                        className="hover:bg-slate-50 transition-colors cursor-pointer group"
+                      >
+                        <td className="p-4">
+                          <div className="flex items-center gap-3">
+                            <img
+                              src={company.logoPlaceholder}
+                              alt={company.name}
+                              loading="lazy"
+                              className="w-8 h-8 rounded bg-white border border-slate-200 object-contain p-0.5 shrink-0"
+                              onError={(e) => {
+                                const target = e.target as HTMLImageElement;
+                                if (target.src.includes('logo.clearbit.com') && company.website) {
+                                    const domain = company.website.replace(/^https?:\/\//, '').split('/')[0];
+                                    target.src = `https://www.google.com/s2/favicons?domain=${domain}&sz=128`;
+                                } else if (!target.src.includes('ui-avatars.com')) {
+                                    target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(company.name)}&background=f8fafc&color=64748b&size=128`;
+                                }
+                              }}
+                            />
+                            <div>
+                              <div className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                                {company.name}
+                                {subsidiaries.length > 0 && (
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); toggleGroup(company.name); }}
+                                    className="inline-flex items-center gap-1 text-[10px] text-slate-400 hover:text-indigo-600 font-medium"
+                                  >
+                                    {expandedGroups.has(company.name) ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+                                    {subsidiaries.length} local
+                                  </button>
+                                )}
+                              </div>
+                              <div className="text-[10px] text-slate-500 line-clamp-1">{company.description.substring(0, 50)}...</div>
+                            </div>
                           </div>
-                        </div>
-                      </td>
-                      <td className="p-4">
-                        <div className="flex flex-wrap gap-1.5">
-                          {company.categories?.slice(0, 2).map(cat => (
-                            <span key={cat} className="inline-block bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[10px] font-medium whitespace-nowrap">
-                              {cat}
-                            </span>
-                          ))}
-                          {company.categories?.length > 2 && (
-                            <span className="inline-block bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded text-[10px] font-medium">
-                              +{company.categories.length - 2}
-                            </span>
+                        </td>
+                        <td className="p-4">
+                          <div className="flex flex-wrap gap-1.5">
+                            {company.categories?.slice(0, 2).map(cat => (
+                              <span key={cat} className="inline-block bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[10px] font-medium whitespace-nowrap">
+                                {cat}
+                              </span>
+                            ))}
+                            {company.categories?.length > 2 && (
+                              <span className="inline-block bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded text-[10px] font-medium">
+                                +{company.categories.length - 2}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="p-4">
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-xs font-medium text-slate-700">{company.headquarters || '-'}</span>
+                            <span className="text-[10px] text-slate-400">{company.region}{company.country ? ` · ${company.country}` : ''}</span>
+                            {company.industry && (
+                              <span className="text-[9px] text-indigo-500 font-bold uppercase tracking-wide">{company.industry}</span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="p-4">
+                          <FocusBadge focus={company.focus} />
+                        </td>
+                        <td className="p-4 text-center">
+                          {company.website ? (
+                            <a
+                              href={company.website}
+                              target="_blank"
+                              rel="noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="text-slate-400 hover:text-indigo-600 inline-block"
+                            >
+                              <Globe size={16} />
+                            </a>
+                          ) : (
+                            <span className="text-slate-300">-</span>
                           )}
-                        </div>
-                      </td>
-                      <td className="p-4">
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-xs font-medium text-slate-700">{company.headquarters || '-'}</span>
-                          <span className="text-[10px] text-slate-400">{company.region}{company.country ? ` · ${company.country}` : ''}</span>
-                          {company.industry && (
-                            <span className="text-[9px] text-indigo-500 font-bold uppercase tracking-wide">{company.industry}</span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="p-4">
-                        <FocusBadge focus={company.focus} />
-                      </td>
-                      <td className="p-4 text-center">
-                        {company.website ? (
-                          <a 
-                            href={company.website} 
-                            target="_blank" 
-                            rel="noreferrer" 
-                            onClick={(e) => e.stopPropagation()}
-                            className="text-slate-400 hover:text-indigo-600 inline-block"
-                          >
-                            <Globe size={16} />
-                          </a>
-                        ) : (
-                          <span className="text-slate-300">-</span>
-                        )}
-                      </td>
-                      <td className="p-4 text-right">
-                        <span className="inline-flex items-center gap-1 text-xs font-bold text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity">
-                          View <ArrowRight size={12} />
-                        </span>
-                      </td>
-                    </tr>
+                        </td>
+                        <td className="p-4 text-right">
+                          <span className="inline-flex items-center gap-1 text-xs font-bold text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity">
+                            View <ArrowRight size={12} />
+                          </span>
+                        </td>
+                      </tr>
+                      {/* Subsidiary rows */}
+                      {expandedGroups.has(company.name) && subsidiaries.map(sub => (
+                        <tr
+                          key={sub.id}
+                          onClick={() => onSelectCompany(sub)}
+                          className="bg-slate-50/50 hover:bg-indigo-50/30 transition-colors cursor-pointer group"
+                        >
+                          <td className="p-4 pl-12">
+                            <div className="flex items-center gap-3">
+                              <div className="w-px h-6 bg-indigo-200 -ml-4 mr-2" />
+                              <img
+                                src={sub.logoPlaceholder}
+                                alt={sub.name}
+                                loading="lazy"
+                                className="w-6 h-6 rounded bg-white border border-slate-200 object-contain p-0.5 shrink-0"
+                                onError={(e) => {
+                                  const target = e.target as HTMLImageElement;
+                                  if (!target.src.includes('ui-avatars.com')) {
+                                    target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(sub.name)}&background=f8fafc&color=64748b&size=128`;
+                                  }
+                                }}
+                              />
+                              <div>
+                                <div className="font-medium text-slate-700 text-sm flex items-center gap-2">
+                                  {sub.name}
+                                  <span className="inline-flex items-center bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide">Local Entity</span>
+                                </div>
+                                <div className="text-[10px] text-slate-400 line-clamp-1">{sub.description.substring(0, 50)}...</div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="p-4">
+                            <div className="flex flex-wrap gap-1.5">
+                              {sub.categories?.slice(0, 2).map(cat => (
+                                <span key={cat} className="inline-block bg-slate-100 text-slate-500 px-2 py-0.5 rounded text-[10px] font-medium whitespace-nowrap">
+                                  {cat}
+                                </span>
+                              ))}
+                            </div>
+                          </td>
+                          <td className="p-4">
+                            <span className="text-xs text-slate-600">{sub.headquarters || '-'}</span>
+                          </td>
+                          <td className="p-4">
+                            <FocusBadge focus={sub.focus} />
+                          </td>
+                          <td className="p-4 text-center">
+                            {sub.website ? (
+                              <a href={sub.website} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-slate-400 hover:text-indigo-600 inline-block">
+                                <Globe size={16} />
+                              </a>
+                            ) : (
+                              <span className="text-slate-300">-</span>
+                            )}
+                          </td>
+                          <td className="p-4 text-right">
+                            <span className="inline-flex items-center gap-1 text-xs font-bold text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity">
+                              View <ArrowRight size={12} />
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </React.Fragment>
                   ))
                 )}
               </tbody>
