@@ -70,6 +70,16 @@ const App: React.FC = () => {
     setModelName(getCurrentModelName());
   }, []);
 
+  // Merge enriched partners into existing ones, preserving any that enrichment didn't find.
+  // New partners from enrichment are appended; duplicates (by name+type) are skipped.
+  const mergePartners = (existing: Partner[], enriched: Partner[] | undefined): Partner[] => {
+    if (!enriched || enriched.length === 0) return existing;
+    if (!existing || existing.length === 0) return enriched;
+    const seen = new Set(existing.map(p => `${p.name.toLowerCase()}::${p.type}`));
+    const newOnes = enriched.filter(p => !seen.has(`${p.name.toLowerCase()}::${p.type}`));
+    return [...existing, ...newOnes];
+  };
+
   // Ensure bidirectional partner relationships:
   // If company A lists company B as partner, company B should also list company A.
   // A company can have multiple relationship types (e.g. Visa is both partner & investor in BVNK).
@@ -381,7 +391,8 @@ const App: React.FC = () => {
         setCompanies(current => {
            const withEnriched = current.map(c => {
              if (c.id !== newId) return c;
-             return syncFundingInvestorsToPartners({ ...c, ...enriched, description: finalDescription, logoPlaceholder: logoUrl });
+             const mergedPartners = mergePartners(c.partners, enriched.partners);
+             return syncFundingInvestorsToPartners({ ...c, ...enriched, partners: mergedPartners, description: finalDescription, logoPlaceholder: logoUrl });
            });
            const updated = ensureBidirectionalPartners(withEnriched);
            db.saveCompanies(updated).catch(console.error);
@@ -453,13 +464,6 @@ const App: React.FC = () => {
       const enriched = await enrichCompanyData(normalizedName);
       if (enriched.partners && enriched.partners.length > 0) await syncPartnershipsToNews(normalizedName, enriched.partners);
 
-      // Merge enriched partners with the pre-linked investor
-      const enrichedPartners = enriched.partners || [];
-      const alreadyHasInvestor = enrichedPartners.some(p =>
-        p.name.toLowerCase() === investorName.toLowerCase()
-      );
-      const mergedPartners = alreadyHasInvestor ? enrichedPartners : [investorPartner, ...enrichedPartners];
-
       let logoUrl = skeleton.logoPlaceholder;
       if (enriched.website) {
         const domain = enriched.website.replace(/^https?:\/\//, '').split('/')[0];
@@ -470,7 +474,8 @@ const App: React.FC = () => {
       setCompanies(current => {
         const withEnriched = current.map(c => {
           if (c.id !== newId) return c;
-          return syncFundingInvestorsToPartners({ ...c, ...enriched, partners: mergedPartners, description: finalDescription, logoPlaceholder: logoUrl });
+          const merged = mergePartners(c.partners, enriched.partners);
+          return syncFundingInvestorsToPartners({ ...c, ...enriched, partners: merged, description: finalDescription, logoPlaceholder: logoUrl });
         });
         const updated = ensureBidirectionalPartners(withEnriched);
         db.saveCompanies(updated).catch(console.error);
@@ -522,7 +527,8 @@ const App: React.FC = () => {
           setCompanies(current => {
             const withEnriched = current.map(c => {
               if (c.id !== company.id) return c;
-              return syncFundingInvestorsToPartners({ ...c, ...enriched, description: finalDescription, logoPlaceholder: logoUrl });
+              const mergedPartners = mergePartners(c.partners, enriched.partners);
+              return syncFundingInvestorsToPartners({ ...c, ...enriched, partners: mergedPartners, description: finalDescription, logoPlaceholder: logoUrl });
             });
             const updated = ensureBidirectionalPartners(withEnriched);
             db.saveCompanies(updated).catch(console.error);
@@ -590,7 +596,8 @@ const App: React.FC = () => {
               setCompanies(current => {
                   const withEnriched = current.map(c => {
                     if (c.id !== skel.id) return c;
-                    return syncFundingInvestorsToPartners({ ...c, ...enriched, description: finalDescription, logoPlaceholder: logoUrl });
+                    const mergedPartners = mergePartners(c.partners, enriched.partners);
+                    return syncFundingInvestorsToPartners({ ...c, ...enriched, partners: mergedPartners, description: finalDescription, logoPlaceholder: logoUrl });
                   });
                   const updated = ensureBidirectionalPartners(withEnriched);
                   db.saveCompanies(updated).catch(console.error);
@@ -686,7 +693,8 @@ const App: React.FC = () => {
               const domain = enriched.website.replace(/^https?:\/\//, '').split('/')[0];
               logoUrl = `https://logo.clearbit.com/${domain}`;
           }
-          const refreshedCompany = syncFundingInvestorsToPartners({ ...company, ...enriched, logoPlaceholder: logoUrl });
+          const mergedPartners = mergePartners(company.partners, enriched.partners);
+          const refreshedCompany = syncFundingInvestorsToPartners({ ...company, ...enriched, partners: mergedPartners, logoPlaceholder: logoUrl });
           const newCompanies = companies.map(c => c.id === refreshedCompany.id ? refreshedCompany : c);
           const updated = ensureBidirectionalPartners(newCompanies);
           setCompanies(updated);
