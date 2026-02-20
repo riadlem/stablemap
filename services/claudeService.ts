@@ -1,5 +1,5 @@
 
-import { Company, Partner, Job, NewsItem, Category } from '../types';
+import { Company, Partner, Job, NewsItem, Category, FundingInfo } from '../types';
 import { logger } from './logger';
 import { getCurrentModel, buildRequestBody, extractResponseText, rotateModel, resetFailures, allModelsExhausted } from './aiModels';
 
@@ -1297,6 +1297,110 @@ export interface DiscoveredPortfolioCompany {
   fundingStage?: string;
   investmentDate?: string;
 }
+
+/**
+ * Batch-fetch funding round data for multiple Crypto-First companies at once.
+ * Groups companies into batches of ~4 to minimize search + AI calls.
+ * Returns a map of companyName → FundingInfo.
+ */
+export const batchFetchFunding = async (
+  companyNames: string[],
+  onProgress?: (done: number, total: number) => void,
+): Promise<Map<string, FundingInfo>> => {
+  const results = new Map<string, FundingInfo>();
+  if (companyNames.length === 0) return results;
+
+  // Group into batches of 4 companies per query
+  const BATCH_SIZE = 4;
+  const batches: string[][] = [];
+  for (let i = 0; i < companyNames.length; i += BATCH_SIZE) {
+    batches.push(companyNames.slice(i, i + BATCH_SIZE));
+  }
+
+  let done = 0;
+  for (const batch of batches) {
+    try {
+      // Single search query for the batch: "CompanyA" OR "CompanyB" + funding keywords
+      const orClause = batch.map(n => `"${n}"`).join(' OR ');
+      const { results: searchResults } = await searchWebFull(
+        `(${orClause}) (funding OR raised OR valuation OR "Series" OR "seed round" OR investors)`,
+        { num: 10 }
+      );
+
+      if (searchResults.length === 0) {
+        done += batch.length;
+        onProgress?.(done, companyNames.length);
+        continue;
+      }
+
+      const searchContext = searchResults
+        .map(r => `[${r.title}] (${r.displayLink}) ${r.snippet}`)
+        .join('\n');
+
+      // Single AI call to extract funding for all companies in the batch
+      const companyList = batch.map(n => `- ${n}`).join('\n');
+      const aiResponse = await callAI(
+        `Extract funding round information for these companies from the search results below.\n\nCOMPANIES:\n${companyList}\n\nSEARCH RESULTS:\n${searchContext}\n\nFor EACH company listed above, respond with this format (one block per company, separated by "==="):\n\nCOMPANY: CompanyName\nTOTAL_RAISED: $XXM or $X.XB or unknown\nVALUATION: $XXM or $X.XB or unknown\nLAST_ROUND: Series A/B/C/D/E/F or Seed or Pre-Seed or unknown\nLAST_ROUND_DATE: YYYY or YYYY-MM or unknown\nINVESTORS: Investor1, Investor2, Investor3 or unknown\n\nRules:\n- Use standard financial notation: $50M, $1.2B, $500K\n- Only include data you can confirm from the search results\n- Write "unknown" for any field you cannot determine\n- Include ALL companies even if no funding data is found (mark all fields as unknown)\n- For investors, list the most notable ones (max 5)`,
+        'You extract funding data from search results. Output only the requested format, no extra text.'
+      );
+
+      // Parse the AI response — blocks separated by "==="
+      const blocks = aiResponse.split('===').map(b => b.trim()).filter(Boolean);
+      for (const block of blocks) {
+        const companyMatch = block.match(/COMPANY:\s*(.+)/i);
+        if (!companyMatch) continue;
+        const name = companyMatch[1].trim();
+
+        // Find the matching company name (case-insensitive)
+        const matchedName = batch.find(
+          n => n.toLowerCase() === name.toLowerCase()
+        ) || batch.find(
+          n => name.toLowerCase().includes(n.toLowerCase()) || n.toLowerCase().includes(name.toLowerCase())
+        );
+        if (!matchedName) continue;
+
+        const totalMatch = block.match(/TOTAL_RAISED:\s*(.+)/i);
+        const valMatch = block.match(/VALUATION:\s*(.+)/i);
+        const roundMatch = block.match(/LAST_ROUND:\s*(.+)/i);
+        const dateMatch = block.match(/LAST_ROUND_DATE:\s*(.+)/i);
+        const investorsMatch = block.match(/INVESTORS:\s*(.+)/i);
+
+        const clean = (v: string | undefined): string | undefined => {
+          if (!v) return undefined;
+          const t = v.trim();
+          return t.toLowerCase() === 'unknown' || t === '-' || t === 'n/a' ? undefined : t;
+        };
+
+        const totalRaised = clean(totalMatch?.[1]);
+        const valuation = clean(valMatch?.[1]);
+        const lastRound = clean(roundMatch?.[1]);
+        const lastRoundDate = clean(dateMatch?.[1]);
+        const investorsRaw = clean(investorsMatch?.[1]);
+        const investors = investorsRaw
+          ? investorsRaw.split(',').map(s => s.trim()).filter(s => s.length > 1)
+          : [];
+
+        // Only store if we got at least some data
+        if (totalRaised || valuation || lastRound || investors.length > 0) {
+          results.set(matchedName, {
+            totalRaised,
+            valuation,
+            lastRound,
+            lastRoundDate,
+            investors,
+          });
+        }
+      }
+    } catch (err) {
+      logger.warn('ai', `Batch funding fetch failed for batch: ${batch.join(', ')}`);
+    }
+
+    done += batch.length;
+    onProgress?.(done, companyNames.length);
+  }
+
+  return results;
+};
 
 export const lookupInvestorPortfolio = async (
   investorName: string,

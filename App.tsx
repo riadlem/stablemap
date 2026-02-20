@@ -26,7 +26,7 @@ import CompanyLists from './components/CompanyLists';
 import Investors from './components/Investors';
 import VCPortfolioImport from './components/VCPortfolioImport';
 import ShareModal from './components/ShareModal';
-import { Company, Partner, NewsItem, Category } from './types';
+import { Company, Partner, NewsItem, Category, FundingInfo } from './types';
 import { enrichCompanyData, scanForNewPartnerships, recommendMissingCompanies, getCurrentModelName, fetchUrlContent, analyzeNewsForCompanies, analyzeNewsRelationships, scanAndFixCentralBanks } from "./services/claudeService";
 import { db } from './services/db';
 
@@ -714,6 +714,17 @@ const App: React.FC = () => {
       } catch (e) { alert("Refresh failed. Please try again later."); }
   };
 
+  const handleUpdateCompanyFunding = (companyId: string, funding: FundingInfo) => {
+    setCompanies(current => {
+      const updated = current.map(c => {
+        if (c.id !== companyId) return c;
+        return syncFundingInvestorsToPartners({ ...c, funding });
+      });
+      db.saveCompanies(updated).catch(console.error);
+      return updated;
+    });
+  };
+
   const handleShare = (company: Company) => { setCompanyToShare(company); setShareModalOpen(true); };
 
   const handleScanCentralBanks = async (): Promise<{ fixedCount: number; addedCount: number }> => {
@@ -782,7 +793,7 @@ const App: React.FC = () => {
       case View.INTELLIGENCE: return <Intelligence directoryCompanies={companies.map(c => c.name)} companies={companies} />;
       case View.JOBS: return <JobBoard companies={companies} onUpdateCompanies={handleCompaniesUpdate} />;
       case View.LISTS: return <CompanyLists companies={companies} />;
-      case View.INVESTORS: return <Investors companies={companies} onSelectCompany={setSelectedCompany} onAddCompany={handleAddCompany} onAddCompanyWithInvestor={handleAddCompanyWithInvestor} onNavigateToVCImport={() => setCurrentView(View.VC_IMPORT)} />;
+      case View.INVESTORS: return <Investors companies={companies} onSelectCompany={setSelectedCompany} onAddCompany={handleAddCompany} onAddCompanyWithInvestor={handleAddCompanyWithInvestor} onNavigateToVCImport={() => setCurrentView(View.VC_IMPORT)} onUpdateCompanyFunding={handleUpdateCompanyFunding} />;
       case View.VC_IMPORT: return <VCPortfolioImport companies={companies} onAddCompanyWithInvestor={handleAddCompanyWithInvestor} onBack={() => setCurrentView(View.INVESTORS)} />;
       case View.LOGS: return <Logs onBack={() => setCurrentView(View.DIRECTORY)} companies={companies} onRefreshFromFirestore={setCompanies} />;
       default: return <div>View not found</div>;

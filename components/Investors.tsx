@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { Search, TrendingUp, ChevronDown, ChevronUp, Building2, DollarSign, Users, Plus, Loader2, Telescope, Check, X, UserPlus, Link, ExternalLink, FileSpreadsheet, ArrowRight, Newspaper, ThumbsUp, ThumbsDown } from 'lucide-react';
-import { Company, NewsItem, NewsVote, classifyNewsSourceType, NewsSourceType } from '../types';
-import { lookupInvestorPortfolio, lookupInvestorPortfolioFromUrl, extractPortfolioFromText, scanInvestorNews, extractUnknownCompanyNames, DiscoveredPortfolioCompany } from '../services/claudeService';
+import { Company, FundingInfo, NewsItem, NewsVote, classifyNewsSourceType, NewsSourceType } from '../types';
+import { lookupInvestorPortfolio, lookupInvestorPortfolioFromUrl, extractPortfolioFromText, scanInvestorNews, extractUnknownCompanyNames, DiscoveredPortfolioCompany, batchFetchFunding } from '../services/claudeService';
 import { db } from '../services/db';
 
 const stripMarkdown = (text: string): string =>
@@ -13,6 +13,7 @@ interface InvestorsProps {
   onAddCompany: (name: string) => Promise<void>;
   onAddCompanyWithInvestor: (companyName: string, investorName: string) => Promise<void>;
   onNavigateToVCImport: () => void;
+  onUpdateCompanyFunding: (companyId: string, funding: FundingInfo) => void;
 }
 
 interface InvestorEntry {
@@ -128,7 +129,7 @@ const handleLogoError = (e: React.SyntheticEvent<HTMLImageElement>, name: string
   }
 };
 
-const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAddCompany, onAddCompanyWithInvestor, onNavigateToVCImport }) => {
+const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAddCompany, onAddCompanyWithInvestor, onNavigateToVCImport, onUpdateCompanyFunding }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [expandedInvestor, setExpandedInvestor] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<'portfolio' | 'alpha'>('portfolio');
@@ -174,6 +175,11 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
   const [scannedInvestors, setScannedInvestors] = useState<Set<string>>(new Set());
   const [unknownCompaniesInArticle, setUnknownCompaniesInArticle] = useState<Map<string, string[]>>(new Map());
   const [detectingUnknownFor, setDetectingUnknownFor] = useState<Set<string>>(new Set());
+
+  // Batch funding fetch state
+  const [isFetchingFunding, setIsFetchingFunding] = useState(false);
+  const [fundingProgress, setFundingProgress] = useState({ done: 0, total: 0 });
+  const [fundingResult, setFundingResult] = useState<{ fetched: number; updated: number } | null>(null);
 
   // Load votes from Firestore on mount
   useEffect(() => {
@@ -236,6 +242,59 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
     () => new Set(investors.map(i => i.name.toLowerCase())),
     [investors]
   );
+
+  // Collect all unique Crypto-First portfolio companies missing funding data
+  const cryptoFirstMissingFunding = useMemo(() => {
+    const seen = new Set<string>();
+    const result: Company[] = [];
+    for (const inv of investors) {
+      for (const c of inv.portfolio) {
+        if (c.focus !== 'Crypto-First') continue;
+        if (seen.has(c.id)) continue;
+        if (c.funding?.totalRaised && c.funding?.valuation) continue; // already has funding
+        seen.add(c.id);
+        result.push(c);
+      }
+    }
+    return result;
+  }, [investors]);
+
+  const handleBatchFetchFunding = async () => {
+    if (cryptoFirstMissingFunding.length === 0) return;
+    setIsFetchingFunding(true);
+    setFundingResult(null);
+    setFundingProgress({ done: 0, total: cryptoFirstMissingFunding.length });
+
+    try {
+      const names = cryptoFirstMissingFunding.map(c => c.name);
+      const fundingMap = await batchFetchFunding(names, (done, total) => {
+        setFundingProgress({ done, total });
+      });
+
+      // Apply results
+      let updated = 0;
+      for (const company of cryptoFirstMissingFunding) {
+        const newFunding = fundingMap.get(company.name);
+        if (!newFunding) continue;
+        // Merge with existing funding (keep existing fields if new ones are missing)
+        const merged: FundingInfo = {
+          totalRaised: newFunding.totalRaised || company.funding?.totalRaised,
+          lastRound: newFunding.lastRound || company.funding?.lastRound,
+          valuation: newFunding.valuation || company.funding?.valuation,
+          investors: [...new Set([...(company.funding?.investors || []), ...newFunding.investors])],
+          lastRoundDate: newFunding.lastRoundDate || company.funding?.lastRoundDate,
+        };
+        onUpdateCompanyFunding(company.id, merged);
+        updated++;
+      }
+
+      setFundingResult({ fetched: fundingMap.size, updated });
+    } catch (err) {
+      console.error('Batch funding fetch failed:', err);
+      setFundingResult({ fetched: 0, updated: 0 });
+    }
+    setIsFetchingFunding(false);
+  };
 
   // Effect A: load combined news from global db when "Investment News" tab first opens
   useEffect(() => {
@@ -845,7 +904,38 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
             A → Z
           </button>
         </div>
+        {/* Batch Funding Fetch */}
+        <button
+          onClick={handleBatchFetchFunding}
+          disabled={isFetchingFunding || cryptoFirstMissingFunding.length === 0}
+          className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium whitespace-nowrap"
+          title={cryptoFirstMissingFunding.length === 0
+            ? 'All Crypto-First portfolio companies already have funding data'
+            : `Fetch funding for ${cryptoFirstMissingFunding.length} Crypto-First companies`}
+        >
+          {isFetchingFunding ? (
+            <Loader2 size={14} className="animate-spin" />
+          ) : (
+            <DollarSign size={14} />
+          )}
+          {isFetchingFunding
+            ? `Fetching... ${fundingProgress.done}/${fundingProgress.total}`
+            : `Fetch Funding (${cryptoFirstMissingFunding.length})`}
+        </button>
       </div>
+
+      {/* Funding fetch result */}
+      {fundingResult && (
+        <div className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium ${
+          fundingResult.updated > 0 ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-amber-50 text-amber-800 border border-amber-200'
+        }`}>
+          {fundingResult.updated > 0 ? <Check size={14} /> : <Search size={14} />}
+          {fundingResult.updated > 0
+            ? `Updated funding data for ${fundingResult.updated} companies (${fundingResult.fetched} found)`
+            : 'No new funding data found in search results'}
+          <button onClick={() => setFundingResult(null)} className="ml-auto hover:opacity-70"><X size={14} /></button>
+        </div>
+      )}
 
       {/* Investor List */}
       {filtered.length === 0 ? (
