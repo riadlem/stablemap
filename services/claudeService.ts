@@ -437,11 +437,16 @@ export const enrichCompanyData = async (
   companyName: string
 ): Promise<Partial<Company>> => {
   try {
-    // Search for company info + crypto relevance
-    const { results, modelSummary } = await searchWebFull(
-      `"${companyName}" (stablecoin OR blockchain OR "digital asset" OR crypto OR payments OR fintech)`,
+    // Search for company info — broad query first, fall back to just the name
+    let { results, modelSummary } = await searchWebFull(
+      `${companyName} company overview blockchain crypto fintech`,
       { num: 10 }
     );
+
+    if (results.length === 0) {
+      // Retry with just the company name (some names are niche enough)
+      ({ results, modelSummary } = await searchWebFull(companyName, { num: 10 }));
+    }
 
     if (results.length === 0) {
       logger.warn('search', `No search results for enrichment of ${companyName}`);
