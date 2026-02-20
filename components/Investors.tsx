@@ -149,6 +149,11 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
   const [addingCompanies, setAddingCompanies] = useState<Set<string>>(new Set());
   const [addedCompanies, setAddedCompanies] = useState<Set<string>>(new Set());
 
+  // Add company to investor portfolio state
+  const [addingToPortfolioFor, setAddingToPortfolioFor] = useState<string | null>(null);
+  const [portfolioSearchTerm, setPortfolioSearchTerm] = useState('');
+  const [showPortfolioSuggestions, setShowPortfolioSuggestions] = useState(false);
+
   // Investor news feed state (per-investor accordion)
   const [investorNews, setInvestorNews] = useState<Map<string, NewsItem[]>>(new Map());
   const [scanningNewsFor, setScanningNewsFor] = useState<string | null>(null);
@@ -500,6 +505,34 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
         return next;
       });
     }
+  };
+
+  const portfolioSuggestions = useMemo(() => {
+    if (!portfolioSearchTerm.trim() || !addingToPortfolioFor) return [];
+    const inv = investors.find(i => i.name === addingToPortfolioFor);
+    const existingIds = new Set(inv?.portfolio.map(c => c.id) || []);
+    const q = portfolioSearchTerm.toLowerCase();
+    return companies
+      .filter(c => c.name.toLowerCase().includes(q) && !existingIds.has(c.id))
+      .map(c => c.name)
+      .slice(0, 8);
+  }, [portfolioSearchTerm, addingToPortfolioFor, investors, companies]);
+
+  const handleAddToPortfolio = async (companyName: string, investorName: string) => {
+    setAddingCompanies(prev => new Set(prev).add(companyName));
+    try {
+      await onAddCompanyWithInvestor(companyName, investorName);
+      setAddedCompanies(prev => new Set(prev).add(companyName));
+    } finally {
+      setAddingCompanies(prev => {
+        const next = new Set(prev);
+        next.delete(companyName);
+        return next;
+      });
+    }
+    setPortfolioSearchTerm('');
+    setAddingToPortfolioFor(null);
+    setShowPortfolioSuggestions(false);
   };
 
   const dismissLookupResults = () => {
@@ -920,6 +953,55 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
                           </div>
                         </button>
                       ))}
+                    </div>
+
+                    {/* Add Company to Portfolio */}
+                    <div className="mt-3">
+                      {addingToPortfolioFor === inv.name ? (
+                        <div className="relative flex items-center gap-2">
+                          <div className="relative flex-1">
+                            <input
+                              autoFocus
+                              type="text"
+                              value={portfolioSearchTerm}
+                              onChange={e => { setPortfolioSearchTerm(e.target.value); setShowPortfolioSuggestions(true); }}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter' && portfolioSearchTerm.trim()) handleAddToPortfolio(portfolioSearchTerm, inv.name);
+                                if (e.key === 'Escape') { setAddingToPortfolioFor(null); setPortfolioSearchTerm(''); }
+                              }}
+                              placeholder="Search company or type name..."
+                              className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+                            />
+                            {showPortfolioSuggestions && portfolioSuggestions.length > 0 && (
+                              <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl z-30 max-h-48 overflow-y-auto">
+                                {portfolioSuggestions.map(name => (
+                                  <button
+                                    key={name}
+                                    onClick={() => handleAddToPortfolio(name, inv.name)}
+                                    className="w-full text-left px-3 py-2 text-sm hover:bg-indigo-50 hover:text-indigo-700 transition-colors flex items-center gap-2"
+                                  >
+                                    <Building2 size={12} className="text-slate-400" />
+                                    {name}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          <button onClick={() => { if (portfolioSearchTerm.trim()) handleAddToPortfolio(portfolioSearchTerm, inv.name); }} className="px-3 py-2 bg-indigo-600 text-white text-xs font-bold rounded-lg hover:bg-indigo-700 shrink-0">
+                            Add
+                          </button>
+                          <button onClick={() => { setAddingToPortfolioFor(null); setPortfolioSearchTerm(''); setShowPortfolioSuggestions(false); }} className="p-2 text-slate-400 hover:text-slate-600 shrink-0">
+                            <X size={16} />
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setAddingToPortfolioFor(inv.name); setPortfolioSearchTerm(''); }}
+                          className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100 transition-colors"
+                        >
+                          <Plus size={13} /> Add Company to Portfolio
+                        </button>
+                      )}
                     </div>
 
                     {/* Discover Other Investments */}

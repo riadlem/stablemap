@@ -197,20 +197,22 @@ const SYSTEM_PROMPT = `You are an expert business intelligence analyst specializ
 export const enrichCompanyData = async (
   companyName: string
 ): Promise<Partial<Company>> => {
-  const prompt = `Find comprehensive business intelligence for "${companyName}" in the digital assets, stablecoins, and blockchain infrastructure space.
+  const prompt = `Find comprehensive business intelligence for "${companyName}".
+
+This company may be crypto-native, a traditional enterprise with blockchain/crypto involvement, a VC/investment firm, or a technology company that supports the digital asset ecosystem. Analyze it regardless of its primary industry — we want to understand what they do and any connections to digital assets, stablecoins, blockchain, tokenization, or Web3.
 
 I need a JSON object with these fields:
-- "description": string (2-3 sentence company overview)
+- "description": string (2-3 sentence company overview — what they do, their relevance to digital assets/crypto/blockchain if any)
 - "categories": string[] (from: "Issuer", "Infrastructure", "Wallet", "Payments", "DeFi", "Custody", "Banks")
 - "partners": array of objects with { "name": string, "type": "Fortune500Global" | "CryptoNative" | "Investor", "description": string, "date": string (YYYY-MM-DD if known), "sourceUrl": string (if known), "country": string (HQ country, e.g. "USA", "Germany", "Japan"), "region": "North America" | "Europe" | "APAC" | "LATAM" | "MEA" | "Global", "industry": string (e.g. "Financial Services", "Automotive", "Technology", "Energy", "Electronics") }
   (use type "Investor" for VC firms, PE firms, and investment funds that have invested in the company; use "Fortune500Global" for enterprise/corporate partners; use "CryptoNative" for crypto-native company partners)
 - "website": string (official URL)
 - "headquarters": string (City, Country)
 - "country": string (country of HQ, e.g. "USA", "Germany", "Singapore", "United Kingdom")
-- "industry": string (primary industry vertical, e.g. "Digital Assets", "Payments", "Banking", "Crypto Infrastructure", "DeFi")
+- "industry": string (primary industry vertical, e.g. "Digital Assets", "Payments", "Banking", "Crypto Infrastructure", "DeFi", "Cloud Services", "Venture Capital")
 - "region": "North America" | "EU" | "Europe" | "APAC" | "LATAM" | "MEA" | "Global"
   (EU = headquartered in an EU member state such as France, Germany, Netherlands, Spain, Italy; Europe = UK, Switzerland, Norway or other non-EU European country; MEA = Middle East or Africa; North America = USA or Canada)
-- "focus": "Crypto-First" | "Crypto-Second" (Crypto-First = born as crypto company, Crypto-Second = traditional company that added crypto)
+- "focus": "Crypto-First" | "Crypto-Second" (Crypto-First = born as crypto/blockchain company, Crypto-Second = traditional company that added crypto/blockchain services or investments)
 - "funding": { "totalRaised": string, "lastRound": string, "valuation": string, "investors": string[], "lastRoundDate": string } (if available, otherwise omit)
 
 RETURN ONLY RAW JSON. No markdown. No explanation.`;

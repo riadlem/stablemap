@@ -18,6 +18,7 @@ interface CompanyDetailProps {
   onEditName: (id: string, newName: string) => Promise<void>;
   onAddNews: (companyName: string, news: { title: string; url: string; date: string; summary: string }) => Promise<void>;
   allCompanyIds?: Set<string>;
+  allCompanyNames?: string[];
   onAddCompanyToDirectory?: (name: string) => void;
 }
 
@@ -44,20 +45,25 @@ const DetailFocusBadge: React.FC<{ focus: CompanyFocus }> = ({ focus }) => {
     );
 };
 
-const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare, onUpdateCompany, onRefresh, onDelete, onEditName, onAddNews, allCompanyIds, onAddCompanyToDirectory }) => {
+const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare, onUpdateCompany, onRefresh, onDelete, onEditName, onAddNews, allCompanyIds, allCompanyNames, onAddCompanyToDirectory }) => {
   const [activeTab, setActiveTab] = useState<'overview' | 'jobs' | 'news'>('overview');
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [jobs, setJobs] = useState<Job[]>(company.jobs?.filter(j => isJobRecent(j.postedDate) && !j.hidden) || []);
   const [jobsLoaded, setJobsLoaded] = useState(!!company.jobs && company.jobs.length > 0);
-  
+
   // Edit State
   const [isEditingName, setIsEditingName] = useState(false);
   const [tempName, setTempName] = useState(company.name);
   const [isAddNewsOpen, setIsAddNewsOpen] = useState(false);
   const [isScanningNews, setIsScanningNews] = useState(false);
   const [newsVotes, setNewsVotes] = useState<Record<string, NewsVote>>({});
+
+  // Partner/Investor editing state
+  const [addingPartnerSection, setAddingPartnerSection] = useState<'enterprise' | 'crypto' | 'investor' | null>(null);
+  const [partnerSearchTerm, setPartnerSearchTerm] = useState('');
+  const [showPartnerSuggestions, setShowPartnerSuggestions] = useState(false);
 
   // Load votes from Firestore on mount
   useEffect(() => {
@@ -222,6 +228,37 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
       setIsEditingName(false);
   };
 
+  // Partner add/remove handlers
+  const handleRemovePartner = async (partnerName: string) => {
+    const updatedPartners = company.partners.filter(p => p.name !== partnerName);
+    await onUpdateCompany({ ...company, partners: updatedPartners });
+  };
+
+  const handleAddPartner = async (name: string, type: Partner['type']) => {
+    if (!name.trim()) return;
+    const already = company.partners.some(p => p.name.toLowerCase() === name.trim().toLowerCase());
+    if (already) return;
+    const newPartner: Partner = {
+      name: name.trim(),
+      type,
+      description: `${type === 'Investor' ? 'Investor in' : 'Partnership with'} ${company.name}.`,
+    };
+    await onUpdateCompany({ ...company, partners: [...company.partners, newPartner] });
+    setPartnerSearchTerm('');
+    setAddingPartnerSection(null);
+    setShowPartnerSuggestions(false);
+  };
+
+  const partnerSuggestions = useMemo(() => {
+    if (!partnerSearchTerm.trim() || !allCompanyNames) return [];
+    const q = partnerSearchTerm.toLowerCase();
+    const existingNames = new Set(company.partners.map(p => p.name.toLowerCase()));
+    existingNames.add(company.name.toLowerCase());
+    return allCompanyNames
+      .filter(n => n.toLowerCase().includes(q) && !existingNames.has(n.toLowerCase()))
+      .slice(0, 8);
+  }, [partnerSearchTerm, allCompanyNames, company.partners, company.name]);
+
   // Filter partners by type - Merged Enterprise
   const enterprisePartners = company.partners.filter(p =>
     p.type === 'Fortune500Global' ||
@@ -239,6 +276,48 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
       }
       return '';
   };
+
+  // Inline partner autocomplete component
+  const PartnerAutocomplete: React.FC<{ type: Partner['type']; onClose: () => void }> = ({ type, onClose }) => (
+    <div className="mt-3 relative">
+      <div className="flex items-center gap-2">
+        <div className="relative flex-1">
+          <input
+            autoFocus
+            type="text"
+            value={partnerSearchTerm}
+            onChange={e => { setPartnerSearchTerm(e.target.value); setShowPartnerSuggestions(true); }}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && partnerSearchTerm.trim()) handleAddPartner(partnerSearchTerm, type);
+              if (e.key === 'Escape') { onClose(); setPartnerSearchTerm(''); }
+            }}
+            placeholder={type === 'Investor' ? 'Search or type investor name...' : 'Search or type company name...'}
+            className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+          />
+          {showPartnerSuggestions && partnerSuggestions.length > 0 && (
+            <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl z-30 max-h-48 overflow-y-auto">
+              {partnerSuggestions.map(name => (
+                <button
+                  key={name}
+                  onClick={() => handleAddPartner(name, type)}
+                  className="w-full text-left px-3 py-2 text-sm hover:bg-indigo-50 hover:text-indigo-700 transition-colors flex items-center gap-2"
+                >
+                  <Building2 size={12} className="text-slate-400" />
+                  {name}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <button onClick={() => { if (partnerSearchTerm.trim()) handleAddPartner(partnerSearchTerm, type); }} className="px-3 py-2 bg-indigo-600 text-white text-xs font-bold rounded-lg hover:bg-indigo-700">
+          Add
+        </button>
+        <button onClick={() => { onClose(); setPartnerSearchTerm(''); setShowPartnerSuggestions(false); }} className="p-2 text-slate-400 hover:text-slate-600">
+          <X size={16} />
+        </button>
+      </div>
+    </div>
+  );
 
   return (
     <div className="bg-white rounded-xl border border-slate-200 shadow-sm min-h-[80vh] relative">
@@ -436,15 +515,34 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
             )}
 
             {/* Investor Partners */}
-            {investorPartners.length > 0 && (
-              <div className="col-span-full">
-                <div className="bg-amber-50 border border-amber-200 rounded-xl p-5">
-                  <h3 className="text-sm font-bold text-amber-900 mb-4 flex items-center gap-2 uppercase tracking-wide">
+            <div className="col-span-full">
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-sm font-bold text-amber-900 flex items-center gap-2 uppercase tracking-wide">
                     <TrendingUp size={16} className="text-amber-600" /> Investors & Backers
                   </h3>
+                  {addingPartnerSection !== 'investor' && (
+                    <button
+                      onClick={() => { setAddingPartnerSection('investor'); setPartnerSearchTerm(''); }}
+                      className="flex items-center gap-1 text-[10px] font-bold text-amber-700 hover:text-amber-900 bg-amber-100 hover:bg-amber-200 px-2 py-1 rounded-md transition-colors"
+                    >
+                      <Plus size={11} /> Add Investor
+                    </button>
+                  )}
+                </div>
+                {investorPartners.length === 0 && addingPartnerSection !== 'investor' ? (
+                  <p className="text-xs text-amber-700 italic">No investors tracked.</p>
+                ) : (
                   <div className="flex flex-wrap gap-3">
                     {investorPartners.map((p, idx) => (
-                      <div key={idx} className="bg-white border border-amber-200 rounded-lg px-3 py-2 shadow-sm min-w-[160px]">
+                      <div key={idx} className="bg-white border border-amber-200 rounded-lg px-3 py-2 shadow-sm min-w-[160px] group/card relative">
+                        <button
+                          onClick={() => handleRemovePartner(p.name)}
+                          className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-100 text-red-500 rounded-full flex items-center justify-center opacity-0 group-hover/card:opacity-100 transition-opacity hover:bg-red-200"
+                          title="Remove investor"
+                        >
+                          <X size={10} />
+                        </button>
                         <div className="font-semibold text-slate-900 text-sm">{p.name}</div>
                         {p.description && (
                           <div className="text-xs text-slate-500 mt-0.5">{p.description}</div>
@@ -455,23 +553,43 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
                       </div>
                     ))}
                   </div>
-                </div>
+                )}
+                {addingPartnerSection === 'investor' && (
+                  <PartnerAutocomplete type="Investor" onClose={() => setAddingPartnerSection(null)} />
+                )}
               </div>
-            )}
+            </div>
 
             {/* Fortune 500 & Enterprise Column (Merged) */}
             <div className="bg-slate-50 p-5 rounded-xl border border-slate-200">
-              <h3 className="text-sm font-bold text-slate-900 mb-4 flex items-center gap-2 uppercase tracking-wide">
-                <Globe size={16} className="text-blue-600" /> Fortune 500 & Enterprise
-              </h3>
-              {enterprisePartners.length === 0 ? (
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2 uppercase tracking-wide">
+                  <Globe size={16} className="text-blue-600" /> Fortune 500 & Enterprise
+                </h3>
+                {addingPartnerSection !== 'enterprise' && (
+                  <button
+                    onClick={() => { setAddingPartnerSection('enterprise'); setPartnerSearchTerm(''); }}
+                    className="flex items-center gap-1 text-[10px] font-bold text-slate-500 hover:text-slate-700 bg-slate-200 hover:bg-slate-300 px-2 py-1 rounded-md transition-colors"
+                  >
+                    <Plus size={11} /> Add
+                  </button>
+                )}
+              </div>
+              {enterprisePartners.length === 0 && addingPartnerSection !== 'enterprise' ? (
                 <p className="text-xs text-slate-500 italic">No partnerships tracked.</p>
               ) : (
                 <ul className="space-y-3">
                   {enterprisePartners.map((p, idx) => {
                     const inDirectory = allCompanyIds?.has(generateCompanyId(p.name));
                     return (
-                      <li key={idx} className="bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
+                      <li key={idx} className="bg-white p-3 rounded-lg border border-slate-200 shadow-sm group/card relative">
+                        <button
+                          onClick={() => handleRemovePartner(p.name)}
+                          className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-100 text-red-500 rounded-full flex items-center justify-center opacity-0 group-hover/card:opacity-100 transition-opacity hover:bg-red-200"
+                          title="Remove partner"
+                        >
+                          <X size={10} />
+                        </button>
                         <div className="flex justify-between items-start">
                           <div className="font-semibold text-slate-900 text-sm">{p.name}</div>
                           <div className="flex items-center gap-2">
@@ -504,21 +622,41 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
                   })}
                 </ul>
               )}
+              {addingPartnerSection === 'enterprise' && (
+                <PartnerAutocomplete type="Fortune500Global" onClose={() => setAddingPartnerSection(null)} />
+              )}
             </div>
 
             {/* Crypto Native Column */}
             <div className="bg-slate-50 p-5 rounded-xl border border-slate-200">
-              <h3 className="text-sm font-bold text-slate-900 mb-4 flex items-center gap-2 uppercase tracking-wide">
-                <Sparkles size={16} className="text-indigo-600" /> Crypto Native
-              </h3>
-               {cryptoPartners.length === 0 ? (
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2 uppercase tracking-wide">
+                  <Sparkles size={16} className="text-indigo-600" /> Crypto Native
+                </h3>
+                {addingPartnerSection !== 'crypto' && (
+                  <button
+                    onClick={() => { setAddingPartnerSection('crypto'); setPartnerSearchTerm(''); }}
+                    className="flex items-center gap-1 text-[10px] font-bold text-slate-500 hover:text-slate-700 bg-slate-200 hover:bg-slate-300 px-2 py-1 rounded-md transition-colors"
+                  >
+                    <Plus size={11} /> Add
+                  </button>
+                )}
+              </div>
+               {cryptoPartners.length === 0 && addingPartnerSection !== 'crypto' ? (
                 <p className="text-xs text-slate-500 italic">No partnerships tracked.</p>
               ) : (
                 <ul className="space-y-3">
                   {cryptoPartners.map((p, idx) => {
                     const inDirectory = allCompanyIds?.has(generateCompanyId(p.name));
                     return (
-                      <li key={idx} className="bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
+                      <li key={idx} className="bg-white p-3 rounded-lg border border-slate-200 shadow-sm group/card relative">
+                        <button
+                          onClick={() => handleRemovePartner(p.name)}
+                          className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-100 text-red-500 rounded-full flex items-center justify-center opacity-0 group-hover/card:opacity-100 transition-opacity hover:bg-red-200"
+                          title="Remove partner"
+                        >
+                          <X size={10} />
+                        </button>
                         <div className="flex justify-between items-start">
                           <div className="font-semibold text-slate-900 text-sm">{p.name}</div>
                           {allCompanyIds && onAddCompanyToDirectory && (
@@ -540,6 +678,9 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
                     );
                   })}
                 </ul>
+              )}
+              {addingPartnerSection === 'crypto' && (
+                <PartnerAutocomplete type="CryptoNative" onClose={() => setAddingPartnerSection(null)} />
               )}
             </div>
           </div>

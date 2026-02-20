@@ -453,9 +453,10 @@ const App: React.FC = () => {
   };
 
   const handleRefreshPending = async () => {
-    const pendingKeywords = ['Fetching', 'Intelligence unavailable', 'Queued', 'Analysis unavailable'];
-    const pendingCompanies = companies.filter(c => 
-      pendingKeywords.some(kw => c.description.includes(kw))
+    const pendingKeywords = ['Fetching', 'Intelligence unavailable', 'Queued', 'Analysis unavailable', 'Basic profile created', 'currently unavailable', 'Pending'];
+    const pendingCompanies = companies.filter(c =>
+      pendingKeywords.some(kw => c.description.includes(kw)) ||
+      !c.description || c.description.length < 30
     );
 
     if (pendingCompanies.length === 0) {
@@ -481,7 +482,8 @@ const App: React.FC = () => {
           const finalDescription = enriched.description || company.description;
           
           setCompanies(current => {
-            const updated = current.map(c => c.id === company.id ? { ...c, ...enriched, description: finalDescription, logoPlaceholder: logoUrl } : c);
+            const withEnriched = current.map(c => c.id === company.id ? { ...c, ...enriched, description: finalDescription, logoPlaceholder: logoUrl } : c);
+            const updated = ensureBidirectionalPartners(withEnriched);
             db.saveCompanies(updated).catch(console.error);
             return updated;
           });
@@ -659,7 +661,7 @@ const App: React.FC = () => {
         </div>
     );
     if (selectedCompany) return (
-        <CompanyDetail company={selectedCompany} onBack={() => setSelectedCompany(null)} onShare={handleShare} onUpdateCompany={handleSingleCompanyUpdate} onRefresh={handleRefreshCompany} onDelete={handleDeleteCompany} onEditName={handleEditCompanyName} onAddNews={handleManualNewsAdd} allCompanyIds={new Set(companies.map(c => c.id))} onAddCompanyToDirectory={handleAddCompany} />
+        <CompanyDetail company={selectedCompany} onBack={() => setSelectedCompany(null)} onShare={handleShare} onUpdateCompany={handleSingleCompanyUpdate} onRefresh={handleRefreshCompany} onDelete={handleDeleteCompany} onEditName={handleEditCompanyName} onAddNews={handleManualNewsAdd} allCompanyIds={new Set(companies.map(c => c.id))} allCompanyNames={companies.map(c => c.name)} onAddCompanyToDirectory={handleAddCompany} />
     );
     switch (currentView) {
       case View.DIRECTORY: return <CompanyList companies={companies} onSelectCompany={setSelectedCompany} onAddCompany={handleAddCompany} onImportCompanies={handleImportCompanies} isAdding={addingCompany} onRefreshPending={handleRefreshPending} isRefreshingPending={isRefreshingPending} onScanRecommendations={handleScanRecommendations} onMergeDuplicates={handleMergeDuplicates} />;
