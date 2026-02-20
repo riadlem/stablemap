@@ -496,10 +496,13 @@ const JobBoard: React.FC<JobBoardProps> = ({ companies, onUpdateCompanies }) => 
                     className="w-12 h-12 rounded-lg bg-slate-50 object-contain p-1 border border-slate-100"
                     onError={(e) => {
                       const target = e.target as HTMLImageElement;
-                      const avatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(job.companyName)}&background=f8fafc&color=64748b&size=128`;
-                      
+                      if (target.src.includes('clearbit.com') && (job as any).companyWebsite) {
+                        const domain = (job as any).companyWebsite.replace(/^https?:\/\//, '').split('/')[0];
+                        target.src = `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=128`;
+                        return;
+                      }
                       if (!target.src.includes('ui-avatars.com')) {
-                          target.src = avatarUrl;
+                        target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(job.companyName)}&background=f8fafc&color=64748b&size=128`;
                       }
                     }}
                   />

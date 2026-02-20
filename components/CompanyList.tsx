@@ -509,10 +509,14 @@ const CompanyList: React.FC<CompanyListProps> = ({ companies, onSelectCompany, o
                         className="w-10 h-10 rounded-lg bg-white border border-slate-200 object-contain p-0.5"
                         onError={(e) => {
                           const target = e.target as HTMLImageElement;
-                          const avatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(company.name)}&background=f8fafc&color=64748b&size=128`;
-
+                          // If dead Clearbit URL, try gstatic favicon from website first
+                          if (target.src.includes('clearbit.com') && company.website) {
+                            const domain = company.website.replace(/^https?:\/\//, '').split('/')[0];
+                            target.src = `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=128`;
+                            return;
+                          }
                           if (!target.src.includes('ui-avatars.com')) {
-                              target.src = avatarUrl;
+                            target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(company.name)}&background=f8fafc&color=64748b&size=128`;
                           }
                         }}
                       />
@@ -592,6 +596,11 @@ const CompanyList: React.FC<CompanyListProps> = ({ companies, onSelectCompany, o
                                   className="w-6 h-6 rounded bg-white border border-slate-200 object-contain p-0.5"
                                   onError={(e) => {
                                     const target = e.target as HTMLImageElement;
+                                    if (target.src.includes('clearbit.com') && sub.website) {
+                                      const domain = sub.website.replace(/^https?:\/\//, '').split('/')[0];
+                                      target.src = `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=128`;
+                                      return;
+                                    }
                                     if (!target.src.includes('ui-avatars.com')) {
                                       target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(sub.name)}&background=f8fafc&color=64748b&size=128`;
                                     }
@@ -657,6 +666,11 @@ const CompanyList: React.FC<CompanyListProps> = ({ companies, onSelectCompany, o
                               className="w-8 h-8 rounded bg-white border border-slate-200 object-contain p-0.5 shrink-0"
                               onError={(e) => {
                                 const target = e.target as HTMLImageElement;
+                                if (target.src.includes('clearbit.com') && company.website) {
+                                  const domain = company.website.replace(/^https?:\/\//, '').split('/')[0];
+                                  target.src = `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=128`;
+                                  return;
+                                }
                                 if (!target.src.includes('ui-avatars.com')) {
                                     target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(company.name)}&background=f8fafc&color=64748b&size=128`;
                                 }
@@ -743,6 +757,11 @@ const CompanyList: React.FC<CompanyListProps> = ({ companies, onSelectCompany, o
                                 className="w-6 h-6 rounded bg-white border border-slate-200 object-contain p-0.5 shrink-0"
                                 onError={(e) => {
                                   const target = e.target as HTMLImageElement;
+                                  if (target.src.includes('clearbit.com') && sub.website) {
+                                    const domain = sub.website.replace(/^https?:\/\//, '').split('/')[0];
+                                    target.src = `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=128`;
+                                    return;
+                                  }
                                   if (!target.src.includes('ui-avatars.com')) {
                                     target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(sub.name)}&background=f8fafc&color=64748b&size=128`;
                                   }

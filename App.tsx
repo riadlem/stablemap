@@ -176,8 +176,19 @@ const App: React.FC = () => {
         const lastTime = await db.getLastScanTime();
         setLastScanTime(lastTime);
         const storedCompanies = await db.getCompanies();
+        // Migrate dead Clearbit logo URLs to working gstatic favicon service
+        const migrated = storedCompanies.map(c => {
+          if (c.logoPlaceholder && c.logoPlaceholder.includes('clearbit.com')) {
+            if (c.website) {
+              const domain = c.website.replace(/^https?:\/\//, '').split('/')[0];
+              return { ...c, logoPlaceholder: `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=128` };
+            }
+            return { ...c, logoPlaceholder: `https://ui-avatars.com/api/?name=${encodeURIComponent(c.name)}&background=f8fafc&color=64748b&size=128` };
+          }
+          return c;
+        });
         // Normalize: ensure funding.investors are reflected as Partner entries
-        let normalized = storedCompanies.map(syncFundingInvestorsToPartners);
+        let normalized = migrated.map(syncFundingInvestorsToPartners);
         normalized = ensureBidirectionalPartners(normalized);
         const changed = JSON.stringify(normalized) !== JSON.stringify(storedCompanies);
         setCompanies(normalized);
@@ -517,7 +528,7 @@ const App: React.FC = () => {
           if (enriched.partners && enriched.partners.length > 0) await syncPartnershipsToNews(company.name, enriched.partners);
           
           let logoUrl = company.logoPlaceholder;
-          if (enriched.website && company.logoPlaceholder.includes('ui-avatars.com')) {
+          if (enriched.website && (company.logoPlaceholder.includes('ui-avatars.com') || company.logoPlaceholder.includes('clearbit.com'))) {
               const domain = enriched.website.replace(/^https?:\/\//, '').split('/')[0];
               logoUrl = `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=128`;
           }
@@ -689,7 +700,7 @@ const App: React.FC = () => {
           const enriched = await enrichCompanyData(company.name);
           if (enriched.partners && enriched.partners.length > 0) await syncPartnershipsToNews(company.name, enriched.partners);
           let logoUrl = company.logoPlaceholder;
-          if (enriched.website && company.logoPlaceholder.includes('ui-avatars.com')) {
+          if (enriched.website && (company.logoPlaceholder.includes('ui-avatars.com') || company.logoPlaceholder.includes('clearbit.com'))) {
               const domain = enriched.website.replace(/^https?:\/\//, '').split('/')[0];
               logoUrl = `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=128`;
           }

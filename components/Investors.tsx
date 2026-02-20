@@ -114,14 +114,17 @@ const getInvestorLogoDomain = (name: string): string => {
   return `${slug}.com`;
 };
 
-// 3-tier logo error handler matching Directory pattern
+// 3-tier logo error handler: clearbit → gstatic favicon → ui-avatars
 const handleLogoError = (e: React.SyntheticEvent<HTMLImageElement>, name: string, website?: string) => {
   const target = e.target as HTMLImageElement;
-  const domain = website?.replace(/^https?:\/\//, '').split('/')[0];
-  const avatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=f8fafc&color=64748b&size=128`;
-
+  // Recover dead Clearbit URLs → try gstatic favicon from website
+  if (target.src.includes('clearbit.com') && website) {
+    const domain = website.replace(/^https?:\/\//, '').split('/')[0];
+    target.src = `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=128`;
+    return;
+  }
   if (!target.src.includes('ui-avatars.com')) {
-    target.src = avatarUrl;
+    target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=f8fafc&color=64748b&size=128`;
   }
 };
 

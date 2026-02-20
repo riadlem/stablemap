@@ -498,6 +498,12 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
                   className="w-20 h-20 rounded-xl bg-white border border-slate-200 object-contain p-2 shadow-sm" 
                   onError={(e) => {
                     const target = e.target as HTMLImageElement;
+                    // Recover dead Clearbit URLs → try gstatic favicon from website
+                    if (target.src.includes('clearbit.com') && company.website) {
+                      const domain = company.website.replace(/^https?:\/\//, '').split('/')[0];
+                      target.src = `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=128`;
+                      return;
+                    }
                     // Fallback to UI Avatar initials if the favicon/logo fails
                     if (!target.src.includes('ui-avatars.com')) {
                          target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(company.name)}&background=f8fafc&color=64748b&size=128`;

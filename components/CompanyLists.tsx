@@ -407,7 +407,7 @@ const CompanyLists: React.FC<CompanyListsProps> = ({ companies }) => {
                           inList ? 'bg-indigo-50 border border-indigo-200' : 'hover:bg-slate-50 border border-transparent'
                         }`}>
                         {inList ? <CheckSquare size={14} className="text-indigo-600 shrink-0" /> : <Square size={14} className="text-slate-300 shrink-0" />}
-                        <img src={company.logoPlaceholder} alt="" className="w-5 h-5 rounded shrink-0" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                        <img src={company.logoPlaceholder} alt="" className="w-5 h-5 rounded shrink-0" onError={e => { const t = e.target as HTMLImageElement; if (t.src.includes('clearbit.com') && company.website) { const d = company.website.replace(/^https?:\/\//, '').split('/')[0]; t.src = `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${d}&size=128`; } else { t.style.display = 'none'; } }} />
                         <div className="min-w-0 flex-1">
                           <div className="font-medium text-slate-800 truncate">{company.name}</div>
                           <div className="text-[9px] text-slate-400 truncate">{company.headquarters || company.region} &bull; {company.focus}</div>
@@ -458,7 +458,7 @@ const CompanyLists: React.FC<CompanyListsProps> = ({ companies }) => {
                         {/* Number */}
                         <div className="w-7 h-7 bg-slate-100 rounded-lg flex items-center justify-center text-xs font-black text-slate-400 shrink-0">{idx + 1}</div>
                         {/* Logo */}
-                        <img src={company.logoPlaceholder} alt="" className="w-8 h-8 rounded-lg shrink-0 mt-0.5" onError={e => { (e.target as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${encodeURIComponent(company.name)}&background=f8fafc&color=64748b&size=64`; }} />
+                        <img src={company.logoPlaceholder} alt="" className="w-8 h-8 rounded-lg shrink-0 mt-0.5" onError={e => { const t = e.target as HTMLImageElement; if (t.src.includes('clearbit.com') && company.website) { const d = company.website.replace(/^https?:\/\//, '').split('/')[0]; t.src = `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${d}&size=128`; } else if (!t.src.includes('ui-avatars.com')) { t.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(company.name)}&background=f8fafc&color=64748b&size=64`; } }} />
 
                         {/* Info */}
                         <div className="flex-1 min-w-0">

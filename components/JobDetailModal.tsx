@@ -61,7 +61,25 @@ const JobDetailModal: React.FC<JobDetailModalProps> = ({ job, companyName, compa
         <div className="p-6 border-b border-slate-100 flex justify-between items-start bg-slate-50">
             <div className="flex items-start gap-4">
                 {companyLogo && (
-                    <img src={companyLogo} alt={companyName} className="w-16 h-16 rounded-xl border border-slate-200 bg-white p-1 object-contain" />
+                    <img
+                      src={companyLogo}
+                      alt={companyName}
+                      className="w-16 h-16 rounded-xl border border-slate-200 bg-white p-1 object-contain"
+                      onError={(e) => {
+                        const target = e.target as HTMLImageElement;
+                        // Recover dead Clearbit URLs: extract domain from clearbit URL
+                        if (target.src.includes('clearbit.com')) {
+                          const match = target.src.match(/clearbit\.com\/([^?]+)/);
+                          if (match) {
+                            target.src = `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${match[1]}&size=128`;
+                            return;
+                          }
+                        }
+                        if (!target.src.includes('ui-avatars.com')) {
+                          target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(companyName)}&background=f8fafc&color=64748b&size=128`;
+                        }
+                      }}
+                    />
                 )}
                 <div>
                     <h2 className="text-2xl font-bold text-slate-900 leading-tight">{details.title}</h2>
