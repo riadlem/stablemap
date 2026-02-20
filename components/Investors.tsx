@@ -550,10 +550,35 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
   const DiscoveredCompanyCard: React.FC<{ company: DiscoveredPortfolioCompany; investorContext?: string }> = ({ company, investorContext }) => {
     const isAdding = addingCompanies.has(company.name);
     const isAdded = addedCompanies.has(company.name) || existingCompanyNames.some(n => n.toLowerCase() === company.name.toLowerCase());
+    const discoveredLogoDomain = getInvestorLogoDomain(company.name);
     return (
-      <div className="flex items-start justify-between gap-3 p-3 bg-white rounded-lg border border-amber-200">
+      <div className="flex items-start gap-3 p-3 bg-white rounded-lg border border-amber-200">
+        <img
+          src={`https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${discoveredLogoDomain}&size=128`}
+          alt={company.name}
+          className="w-8 h-8 rounded-lg bg-white border border-slate-200 object-contain p-0.5 shrink-0 mt-0.5"
+          onError={(e) => handleLogoError(e, company.name)}
+        />
         <div className="min-w-0 flex-1">
-          <p className="font-semibold text-slate-900 text-sm">{company.name}</p>
+          <div className="flex items-start justify-between gap-2">
+            <p className="font-semibold text-slate-900 text-sm">{company.name}</p>
+            <div className="shrink-0">
+              {isAdded ? (
+                <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-1.5 rounded-lg">
+                  <Check size={12} /> In Directory
+                </span>
+              ) : (
+                <button
+                  onClick={() => handleAddToDirectory(company.name, investorContext)}
+                  disabled={isAdding}
+                  className="flex items-center gap-1 text-[10px] font-bold text-indigo-600 hover:text-white hover:bg-indigo-600 bg-indigo-50 px-2 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+                >
+                  {isAdding ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
+                  {isAdding ? 'Adding...' : 'Add'}
+                </button>
+              )}
+            </div>
+          </div>
           <p className="text-xs text-slate-500 mt-0.5 leading-snug">{stripMarkdown(company.description)}</p>
           <div className="flex flex-wrap gap-1.5 mt-1.5">
             <span className="text-[10px] font-medium bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded">
@@ -570,22 +595,6 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
               </span>
             )}
           </div>
-        </div>
-        <div className="shrink-0">
-          {isAdded ? (
-            <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-1.5 rounded-lg">
-              <Check size={12} /> In Directory
-            </span>
-          ) : (
-            <button
-              onClick={() => handleAddToDirectory(company.name, investorContext)}
-              disabled={isAdding}
-              className="flex items-center gap-1 text-[10px] font-bold text-indigo-600 hover:text-white hover:bg-indigo-600 bg-indigo-50 px-2 py-1.5 rounded-lg transition-colors disabled:opacity-50"
-            >
-              {isAdding ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
-              {isAdding ? 'Adding...' : 'Add'}
-            </button>
-          )}
         </div>
       </div>
     );
@@ -982,7 +991,12 @@ const Investors: React.FC<InvestorsProps> = ({ companies, onSelectCompany, onAdd
                                     onClick={() => handleAddToPortfolio(name, inv.name)}
                                     className="w-full text-left px-3 py-2 text-sm hover:bg-indigo-50 hover:text-indigo-700 transition-colors flex items-center gap-2"
                                   >
-                                    <Building2 size={12} className="text-slate-400" />
+                                    <img
+                                      src={`https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${getInvestorLogoDomain(name)}&size=128`}
+                                      alt=""
+                                      className="w-5 h-5 rounded bg-white border border-slate-200 object-contain shrink-0"
+                                      onError={(e) => handleLogoError(e, name)}
+                                    />
                                     {name}
                                   </button>
                                 ))}

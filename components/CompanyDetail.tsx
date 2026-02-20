@@ -7,6 +7,53 @@ import { db } from '../services/db';
 import { isJobRecent } from '../constants';
 import AddNewsModal from './AddNewsModal';
 import JobDetailModal from './JobDetailModal';
+import { LOGO_DOMAIN_OVERRIDES } from './GlobalPartnershipMatrix';
+
+// Resolve a favicon-friendly domain for a partner/investor name
+const PARTNER_DOMAIN_OVERRIDES: Record<string, string> = {
+  'Andreessen Horowitz': 'a16z.com', 'a16z': 'a16z.com', 'a16z Crypto': 'a16z.com',
+  'Sequoia Capital': 'sequoiacap.com', 'Sequoia': 'sequoiacap.com',
+  'Lightspeed Venture Partners': 'lsvp.com', 'Lightspeed': 'lsvp.com',
+  'Paradigm': 'paradigm.xyz', 'Polychain Capital': 'polychain.capital',
+  'Pantera Capital': 'panteracapital.com', 'Multicoin Capital': 'multicoin.capital',
+  'Coinbase Ventures': 'coinbase.com', 'Binance Labs': 'binance.com',
+  'Digital Currency Group': 'dcg.co', 'DCG': 'dcg.co',
+  'Galaxy Digital': 'galaxy.com', 'Dragonfly': 'dragonfly.xyz', 'Dragonfly Capital': 'dragonfly.xyz',
+  'Electric Capital': 'electriccapital.com', 'Framework Ventures': 'framework.ventures',
+  'Blockchain Capital': 'blockchaincapital.com', 'Animoca Brands': 'animocabrands.com',
+  'Circle': 'circle.com', 'Circle Ventures': 'circle.com',
+  'Variant': 'variant.fund', 'Variant Fund': 'variant.fund',
+  'Haun Ventures': 'haun.co', 'Placeholder VC': 'placeholder.vc',
+  'Castle Island Ventures': 'castleisland.vc',
+  'Brevan Howard': 'brevanhoward.com', 'Brevan Howard Digital': 'brevanhoward.com',
+  'SoftBank': 'softbank.com', 'Goldman Sachs': 'goldmansachs.com',
+  'JPMorgan': 'jpmorgan.com', 'Morgan Stanley': 'morganstanley.com',
+  'BlackRock': 'blackrock.com', 'Fidelity': 'fidelity.com',
+  'General Catalyst': 'generalcatalyst.com', 'Bessemer Venture Partners': 'bvp.com',
+  'Founders Fund': 'foundersfund.com', 'Tiger Global': 'tigerglobal.com',
+  'Coatue': 'coatue.com', 'Ribbit Capital': 'ribbitcap.com',
+  'Accel': 'accel.com', 'Benchmark': 'benchmark.com', 'Greylock': 'greylock.com',
+  'Index Ventures': 'indexventures.com', 'Insight Partners': 'insightpartners.com',
+  'Union Square Ventures': 'usv.com', 'Khosla Ventures': 'khoslaventures.com',
+  'Google Ventures': 'gv.com', 'GV': 'gv.com',
+  'Temasek': 'temasek.com.sg', 'GIC': 'gic.com.sg',
+};
+
+const getPartnerLogoDomain = (name: string): string => {
+  if (PARTNER_DOMAIN_OVERRIDES[name]) return PARTNER_DOMAIN_OVERRIDES[name];
+  if (LOGO_DOMAIN_OVERRIDES[name]) return LOGO_DOMAIN_OVERRIDES[name];
+  return `${name.toLowerCase().replace(/[^a-z0-9]+/g, '')}.com`;
+};
+
+const getPartnerLogoUrl = (name: string): string =>
+  `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${getPartnerLogoDomain(name)}&size=128`;
+
+const handlePartnerLogoError = (e: React.SyntheticEvent<HTMLImageElement>, name: string) => {
+  const target = e.target as HTMLImageElement;
+  if (!target.src.includes('ui-avatars.com')) {
+    target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=f8fafc&color=64748b&size=128`;
+  }
+};
 
 // Render description text with basic formatting: **bold**, *italic*, bullet points, line breaks
 const FormattedDescription: React.FC<{ text: string }> = ({ text }) => {
@@ -396,7 +443,12 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
                   onClick={() => handleAddPartner(name, type)}
                   className="w-full text-left px-3 py-2 text-sm hover:bg-indigo-50 hover:text-indigo-700 transition-colors flex items-center gap-2"
                 >
-                  <Building2 size={12} className="text-slate-400" />
+                  <img
+                    src={getPartnerLogoUrl(name)}
+                    alt=""
+                    className="w-5 h-5 rounded bg-white border border-slate-200 object-contain shrink-0"
+                    onError={(e) => handlePartnerLogoError(e, name)}
+                  />
                   {name}
                 </button>
               ))}
@@ -614,7 +666,7 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
                 ) : (
                   <div className="flex flex-wrap gap-3">
                     {investorPartners.map((p, idx) => (
-                      <div key={idx} className="bg-white border border-amber-200 rounded-lg px-3 py-2 shadow-sm min-w-[160px] group/card relative">
+                      <div key={idx} className="bg-white border border-amber-200 rounded-lg px-3 py-2 shadow-sm min-w-[160px] group/card relative flex items-center gap-2.5">
                         <button
                           onClick={() => handleRemovePartner(p.name, p.type)}
                           className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-100 text-red-500 rounded-full flex items-center justify-center opacity-0 group-hover/card:opacity-100 transition-opacity hover:bg-red-200"
@@ -622,10 +674,18 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
                         >
                           <X size={10} />
                         </button>
-                        <div className="font-semibold text-slate-900 text-sm">{p.name}</div>
-                        {p.date && (
-                          <div className="text-[10px] text-amber-600 font-medium mt-1">{p.date}</div>
-                        )}
+                        <img
+                          src={getPartnerLogoUrl(p.name)}
+                          alt={p.name}
+                          className="w-7 h-7 rounded-md bg-white border border-slate-200 object-contain p-0.5 shrink-0"
+                          onError={(e) => handlePartnerLogoError(e, p.name)}
+                        />
+                        <div>
+                          <div className="font-semibold text-slate-900 text-sm">{p.name}</div>
+                          {p.date && (
+                            <div className="text-[10px] text-amber-600 font-medium mt-0.5">{p.date}</div>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -666,33 +726,43 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
                         >
                           <X size={10} />
                         </button>
-                        <div className="flex justify-between items-start">
-                          <div className="font-semibold text-slate-900 text-sm">{p.name}</div>
-                          <div className="flex items-center gap-2">
-                            {p.type === 'Fortune500Global' && <span className="text-[9px] text-slate-400 font-bold uppercase">Global</span>}
-                            {allCompanyIds && onAddCompanyToDirectory && (
-                              inDirectory ? (
-                                <span className="text-[9px] text-emerald-500 font-bold flex items-center gap-0.5"><Check size={10} /> In Directory</span>
-                              ) : (
-                                <button
-                                  onClick={() => { setAddingPartner(p.name); onAddCompanyToDirectory(p.name); }}
-                                  disabled={addingPartner === p.name}
-                                  className="text-[9px] text-indigo-600 hover:text-indigo-800 font-bold flex items-center gap-0.5 disabled:opacity-50"
-                                >
-                                  <UserPlus size={10} /> {addingPartner === p.name ? 'Adding...' : 'Add'}
-                                </button>
-                              )
+                        <div className="flex items-start gap-2.5">
+                          <img
+                            src={getPartnerLogoUrl(p.name)}
+                            alt={p.name}
+                            className="w-8 h-8 rounded-lg bg-white border border-slate-200 object-contain p-0.5 shrink-0 mt-0.5"
+                            onError={(e) => handlePartnerLogoError(e, p.name)}
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex justify-between items-start">
+                              <div className="font-semibold text-slate-900 text-sm">{p.name}</div>
+                              <div className="flex items-center gap-2">
+                                {p.type === 'Fortune500Global' && <span className="text-[9px] text-slate-400 font-bold uppercase">Global</span>}
+                                {allCompanyIds && onAddCompanyToDirectory && (
+                                  inDirectory ? (
+                                    <span className="text-[9px] text-emerald-500 font-bold flex items-center gap-0.5"><Check size={10} /> In Directory</span>
+                                  ) : (
+                                    <button
+                                      onClick={() => { setAddingPartner(p.name); onAddCompanyToDirectory(p.name); }}
+                                      disabled={addingPartner === p.name}
+                                      className="text-[9px] text-indigo-600 hover:text-indigo-800 font-bold flex items-center gap-0.5 disabled:opacity-50"
+                                    >
+                                      <UserPlus size={10} /> {addingPartner === p.name ? 'Adding...' : 'Add'}
+                                    </button>
+                                  )
+                                )}
+                              </div>
+                            </div>
+                            <div className="text-xs text-slate-600 mt-1">{p.description}</div>
+                            {(p.country || p.industry) && (
+                              <div className="flex items-center gap-2 mt-1.5">
+                                {p.country && <span className="text-[9px] text-slate-400 font-medium">{p.country}{p.region ? ` (${p.region})` : ''}</span>}
+                                {p.country && p.industry && <span className="text-[9px] text-slate-300">|</span>}
+                                {p.industry && <span className="text-[9px] text-indigo-400 font-medium">{p.industry}</span>}
+                              </div>
                             )}
                           </div>
                         </div>
-                        <div className="text-xs text-slate-600 mt-1">{p.description}</div>
-                        {(p.country || p.industry) && (
-                          <div className="flex items-center gap-2 mt-1.5">
-                            {p.country && <span className="text-[9px] text-slate-400 font-medium">{p.country}{p.region ? ` (${p.region})` : ''}</span>}
-                            {p.country && p.industry && <span className="text-[9px] text-slate-300">|</span>}
-                            {p.industry && <span className="text-[9px] text-indigo-400 font-medium">{p.industry}</span>}
-                          </div>
-                        )}
                       </li>
                     );
                   })}
@@ -733,23 +803,33 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
                         >
                           <X size={10} />
                         </button>
-                        <div className="flex justify-between items-start">
-                          <div className="font-semibold text-slate-900 text-sm">{p.name}</div>
-                          {allCompanyIds && onAddCompanyToDirectory && (
-                            inDirectory ? (
-                              <span className="text-[9px] text-emerald-500 font-bold flex items-center gap-0.5"><Check size={10} /> In Directory</span>
-                            ) : (
-                              <button
-                                onClick={() => { setAddingPartner(p.name); onAddCompanyToDirectory(p.name); }}
-                                disabled={addingPartner === p.name}
-                                className="text-[9px] text-indigo-600 hover:text-indigo-800 font-bold flex items-center gap-0.5 disabled:opacity-50"
-                              >
-                                <UserPlus size={10} /> {addingPartner === p.name ? 'Adding...' : 'Add'}
-                              </button>
-                            )
-                          )}
+                        <div className="flex items-start gap-2.5">
+                          <img
+                            src={getPartnerLogoUrl(p.name)}
+                            alt={p.name}
+                            className="w-8 h-8 rounded-lg bg-white border border-slate-200 object-contain p-0.5 shrink-0 mt-0.5"
+                            onError={(e) => handlePartnerLogoError(e, p.name)}
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex justify-between items-start">
+                              <div className="font-semibold text-slate-900 text-sm">{p.name}</div>
+                              {allCompanyIds && onAddCompanyToDirectory && (
+                                inDirectory ? (
+                                  <span className="text-[9px] text-emerald-500 font-bold flex items-center gap-0.5"><Check size={10} /> In Directory</span>
+                                ) : (
+                                  <button
+                                    onClick={() => { setAddingPartner(p.name); onAddCompanyToDirectory(p.name); }}
+                                    disabled={addingPartner === p.name}
+                                    className="text-[9px] text-indigo-600 hover:text-indigo-800 font-bold flex items-center gap-0.5 disabled:opacity-50"
+                                  >
+                                    <UserPlus size={10} /> {addingPartner === p.name ? 'Adding...' : 'Add'}
+                                  </button>
+                                )
+                              )}
+                            </div>
+                            <div className="text-xs text-slate-600 mt-1">{p.description}</div>
+                          </div>
                         </div>
-                        <div className="text-xs text-slate-600 mt-1">{p.description}</div>
                       </li>
                     );
                   })}
