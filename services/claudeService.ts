@@ -1,186 +1,64 @@
 
 import { Company, Partner, Job, NewsItem, Category } from '../types';
 import { logger } from './logger';
-import {
-  getCurrentModel,
-  getCurrentModelLabel,
-  rotateModel,
-  resetFailures,
-  allModelsExhausted,
-  buildRequestBody,
-  extractResponseText,
-  MODEL_ROSTER,
-  type ModelConfig,
-} from './aiModels';
 
 // --- CONFIGURATION ---
 
-const MAX_RETRIES = 3;
-const RETRY_DELAY_MS = 1500;
-
-// Proxy endpoints — serverless functions hold API keys server-side
+const SEARCH_API_ENDPOINT = '/api/search';
 const FETCH_URL_ENDPOINT = '/api/fetch-url';
-const NEWS_API_ENDPOINT = '/api/news';
 
 export const getCurrentModelName = (): string => {
-  return getCurrentModelLabel();
+  return 'Google Web Search';
 };
 
-// --- CORE API CALL (via server-side proxy, with provider rotation) ---
+// --- SEARCH RESULT TYPES ---
 
-const ROTATABLE_STATUS_CODES = new Set([429, 500, 501, 502, 503, 529]);
-
-// Error messages that indicate the provider is unusable (billing, quota, disabled)
-// even when the HTTP status is 400/401/403.  These should trigger rotation.
-const PROVIDER_UNUSABLE_PATTERNS = [
-  'credit balance',
-  'insufficient_quota',
-  'billing',
-  'exceeded your current quota',
-  'account is not active',
-  'api key is disabled',
-  'rate limit',
-  'plan does not allow',
-];
-
-const isProviderUnusable = (errText: string): boolean => {
-  const lower = errText.toLowerCase();
-  return PROVIDER_UNUSABLE_PATTERNS.some(p => lower.includes(p));
-};
-
-const callAI = async (
-  prompt: string,
-  systemPrompt?: string,
-  temperature: number = 0.7
-): Promise<string> => {
-  const start = Date.now();
-  let lastError: Error | null = null;
-
-  // Try every model in the roster before giving up
-  for (let attempt = 0; attempt < MODEL_ROSTER.length; attempt++) {
-    const model: ModelConfig = getCurrentModel();
-    const body = buildRequestBody(model, prompt, systemPrompt, temperature);
-
-    logger.info('ai', `Calling ${model.displayName} (${model.provider}/${model.id})`, prompt.substring(0, 120) + '...');
-
-    try {
-      const response = await fetch(model.proxyEndpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-
-      const duration = Date.now() - start;
-      logger.api('POST', model.proxyEndpoint, response.status, duration);
-
-      if (!response.ok) {
-        const errText = await response.text();
-        logger.error('ai', `${model.displayName} API error ${response.status}`, errText);
-
-        // Rotate on overload / server errors OR billing / quota errors
-        if (ROTATABLE_STATUS_CODES.has(response.status) || isProviderUnusable(errText)) {
-          lastError = new Error(`${model.displayName} ${response.status}: ${errText}`);
-          rotateModel();
-          continue;
-        }
-
-        // Genuine bad-request errors (malformed prompt etc.) — bail immediately
-        throw new Error(`API Error ${response.status}: ${errText}`);
-      }
-
-      const data = await response.json();
-
-      // Check for provider-specific error envelopes
-      if (data.error) {
-        const errMsg = typeof data.error === 'string' ? data.error : data.error.message || JSON.stringify(data.error);
-        logger.error('ai', `${model.displayName} returned error`, errMsg);
-        lastError = new Error(`${model.displayName} Error: ${errMsg}`);
-        rotateModel();
-        continue;
-      }
-
-      const result = extractResponseText(model.provider, data);
-
-      if (!result) {
-        logger.warn('ai', `${model.displayName} returned empty content, rotating`);
-        lastError = new Error(`${model.displayName} returned empty response`);
-        rotateModel();
-        continue;
-      }
-
-      resetFailures();
-      const totalDuration = Date.now() - start;
-      logger.info('ai', `${model.displayName} response received (${result.length} chars, ${totalDuration}ms)`);
-      return result;
-
-    } catch (err: any) {
-      // Network / fetch errors — rotate
-      if (!err.message?.startsWith('API Error')) {
-        logger.error('ai', `${model.displayName} network error`, err.message);
-        lastError = err;
-        rotateModel();
-        continue;
-      }
-      throw err;
-    }
-  }
-
-  throw lastError || new Error('All AI providers failed');
-};
-
-// Backwards-compatible alias
-const callClaude = callAI;
-
-// --- RETRY WRAPPER ---
-
-async function executeWithRetry<T>(
-  operationName: string,
-  operation: () => Promise<T>
-): Promise<T> {
-  let lastError: any = null;
-
-  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    try {
-      return await operation();
-    } catch (error: any) {
-      lastError = error;
-      const msg = (error?.message || '').toLowerCase();
-
-      if (msg.includes('401') || msg.includes('not configured')) {
-        throw error;
-      }
-
-      if (msg.includes('429')) {
-        await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * (attempt + 2)));
-        continue;
-      }
-
-      if (attempt < MAX_RETRIES - 1) {
-        await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * (attempt + 1)));
-      }
-    }
-  }
-
-  throw new Error(`All retries exhausted for ${operationName}. Last error: ${lastError?.message}`);
+interface SearchResult {
+  title: string;
+  link: string;
+  snippet: string;
+  displayLink: string;
 }
 
-// --- JSON PARSING ---
+interface SearchOptions {
+  num?: number;
+  dateRestrict?: string;
+  siteSearch?: string;
+  sort?: string;
+}
 
-const parseJSON = (text: string): any => {
+// --- CORE SEARCH FUNCTION (via /api/search proxy) ---
+
+const searchWeb = async (
+  query: string,
+  options: SearchOptions = {}
+): Promise<SearchResult[]> => {
+  const start = Date.now();
+  logger.info('search', `Searching web`, query.substring(0, 120));
+
   try {
-    if (!text) return null;
-    const clean = text.replace(/```json\n?|```/g, '').trim();
-    const firstBrace = clean.indexOf('{');
-    const lastBrace = clean.lastIndexOf('}');
-    if (firstBrace !== -1 && lastBrace !== -1)
-      return JSON.parse(clean.substring(firstBrace, lastBrace + 1));
-    const firstBracket = clean.indexOf('[');
-    const lastBracket = clean.lastIndexOf(']');
-    if (firstBracket !== -1 && lastBracket !== -1)
-      return JSON.parse(clean.substring(firstBracket, lastBracket + 1));
-    return JSON.parse(clean);
-  } catch (e) {
-    return null;
+    const response = await fetch(SEARCH_API_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, ...options }),
+    });
+
+    const duration = Date.now() - start;
+    logger.api('POST', SEARCH_API_ENDPOINT, response.status, duration, query.substring(0, 80));
+
+    if (!response.ok) {
+      const errText = await response.text();
+      logger.error('search', `Search API error ${response.status}`, errText);
+      return [];
+    }
+
+    const data = await response.json();
+    const results: SearchResult[] = data.results || [];
+    logger.info('search', `Search returned ${results.length} results (${duration}ms)`);
+    return results;
+  } catch (err: any) {
+    logger.error('search', `Search failed`, err?.message || String(err));
+    return [];
   }
 };
 
@@ -207,119 +85,319 @@ export const fetchUrlContent = async (
   }
 };
 
-// --- NEWS API FETCHER (via /api/news) ---
+// --- TEXT PARSING HELPERS ---
 
-interface NewsAPIArticle {
-  title: string;
-  source: string;
-  date: string;
-  summary: string;
-  url: string;
-  author: string;
-}
+// Detect company categories from text based on keyword matching
+const categorizeFromText = (text: string): Category[] => {
+  const lower = text.toLowerCase();
+  const cats: Category[] = [];
 
-const fetchNewsFromAPI = async (
-  query: string,
-  from?: string
-): Promise<NewsAPIArticle[]> => {
-  const start = Date.now();
-  logger.info('news', `Fetching news from API`, `query="${query}" from=${from || 'none'}`);
-  try {
-    const response = await fetch(NEWS_API_ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, from, pageSize: 20 }),
-    });
-    const duration = Date.now() - start;
-    logger.api('POST', NEWS_API_ENDPOINT, response.status, duration);
-    if (!response.ok) {
-      const errText = await response.text();
-      logger.error('news', `News API returned ${response.status}`, errText);
-      return [];
-    }
-    const data = await response.json();
-    const count = (data.articles || []).length;
-    logger.info('news', `News API returned ${count} articles (total: ${data.totalResults || 0})`);
-    return data.articles || [];
-  } catch (err: any) {
-    const duration = Date.now() - start;
-    logger.error('news', `News API fetch failed (${duration}ms)`, err?.message || String(err));
-    return [];
-  }
+  if (/stablecoin|issuer|usdc|usdt|fiat-backed|mint(?:ing)?\b/.test(lower))
+    cats.push(Category.ISSUER);
+  if (/infrastructure|protocol|layer[\s-]?[12]|node|validator|blockchain platform/.test(lower))
+    cats.push(Category.INFRASTRUCTURE);
+  if (/\bwallet\b|self-custody|key management/.test(lower))
+    cats.push(Category.WALLET);
+  if (/payment|remittance|transfer|payroll|point[\s-]of[\s-]sale|checkout/.test(lower))
+    cats.push(Category.PAYMENTS);
+  if (/\bdefi\b|decentralized finance|yield|lending protocol|liquidity pool|amm\b/.test(lower))
+    cats.push(Category.DEFI);
+  if (/\bcustody\b|safekeeping|digital vault|qualified custodian/.test(lower))
+    cats.push(Category.CUSTODY);
+  if (/central bank|cbdc|monetary authority|reserve bank/.test(lower))
+    cats.push(Category.CENTRAL_BANKS);
+  if (/venture capital|\bvc\b|crypto fund|investment fund|private equity/.test(lower))
+    cats.push(Category.VC);
+  if (/consult|advisory|professional services|\bpwc\b|\bdeloitte\b|\bey\b|\baccenture\b|\bmckinsey\b/.test(lower))
+    cats.push(Category.CONSULTANCY);
+  if (/\bbank(?:ing)?\b/.test(lower) && !cats.includes(Category.CENTRAL_BANKS))
+    cats.push(Category.BANKS);
+
+  return [...new Set(cats)];
 };
 
-// --- SYSTEM PROMPTS ---
+// Determine Crypto-First vs Crypto-Second
+const determineFocus = (text: string, companyName: string): 'Crypto-First' | 'Crypto-Second' => {
+  const lower = text.toLowerCase();
+  const cryptoSignals = [
+    'blockchain company', 'crypto company', 'web3', 'cryptocurrency exchange',
+    'digital asset company', 'defi protocol', 'stablecoin issuer', 'crypto-native',
+    'founded.*blockchain', 'founded.*crypto', 'decentralized',
+  ];
+  const tradSignals = [
+    'traditional bank', 'fortune 500', 'multinational', 'established in 19',
+    'global enterprise', 'consulting firm', 'financial institution',
+    'insurance company', 'added crypto', 'launched.*blockchain',
+  ];
 
-const SYSTEM_PROMPT = `You are an expert business intelligence analyst specializing in the digital asset, stablecoin, and blockchain enterprise ecosystem. You provide accurate, concise, structured data about companies and their partnerships in this space. Always respond with valid JSON only — no markdown, no explanation, no preamble. Just the raw JSON object or array.`;
+  const cryptoScore = cryptoSignals.filter(p => new RegExp(p).test(lower)).length;
+  const tradScore = tradSignals.filter(p => new RegExp(p).test(lower)).length;
+
+  return cryptoScore > tradScore ? 'Crypto-First' : 'Crypto-Second';
+};
+
+// Extract location from text
+const extractLocationFromText = (text: string): {
+  headquarters: string;
+  country: string;
+  region: 'North America' | 'EU' | 'Europe' | 'APAC' | 'LATAM' | 'MEA' | 'Global';
+} => {
+  const hqPatterns = [
+    /headquartered in ([^,.;]+(?:, [^,.;]+)?)/i,
+    /based in ([^,.;]+(?:, [^,.;]+)?)/i,
+    /headquarters? (?:is |are )?(?:in |at )?([^,.;]+(?:, [^,.;]+)?)/i,
+    /([A-Z][a-z]+(?:[\s,]+[A-Z][a-z]+){0,2})-based company/,
+  ];
+
+  let headquarters = '';
+  for (const p of hqPatterns) {
+    const m = text.match(p);
+    if (m) { headquarters = m[1].trim(); break; }
+  }
+
+  // Country detection
+  const countryPatterns: [string, RegExp][] = [
+    ['USA', /\b(?:United States|U\.?S\.?A?\.?|New York|San Francisco|California|Boston|Chicago|Washington|Miami|Austin|Denver|Seattle)\b/i],
+    ['United Kingdom', /\b(?:United Kingdom|U\.?K\.?|London|England|Scotland)\b/i],
+    ['Germany', /\b(?:Germany|Berlin|Frankfurt|Munich)\b/i],
+    ['France', /\b(?:France|Paris)\b/i],
+    ['Switzerland', /\b(?:Switzerland|Zurich|Zug|Geneva)\b/i],
+    ['Singapore', /\bSingapore\b/i],
+    ['Japan', /\b(?:Japan|Tokyo)\b/i],
+    ['South Korea', /\b(?:South Korea|Seoul)\b/i],
+    ['China', /\b(?:China|Beijing|Shanghai|Hong Kong)\b/i],
+    ['UAE', /\b(?:UAE|Dubai|Abu Dhabi|United Arab Emirates)\b/i],
+    ['Canada', /\b(?:Canada|Toronto|Vancouver)\b/i],
+    ['Australia', /\b(?:Australia|Sydney|Melbourne)\b/i],
+    ['Netherlands', /\b(?:Netherlands|Amsterdam)\b/i],
+    ['Ireland', /\b(?:Ireland|Dublin)\b/i],
+    ['Brazil', /\b(?:Brazil|São Paulo)\b/i],
+    ['India', /\b(?:India|Mumbai|Bangalore|Delhi)\b/i],
+  ];
+
+  let country = '';
+  for (const [c, p] of countryPatterns) {
+    if (p.test(text)) { country = c; break; }
+  }
+
+  // Region mapping
+  const regionMap: Record<string, 'North America' | 'EU' | 'Europe' | 'APAC' | 'LATAM' | 'MEA' | 'Global'> = {
+    'USA': 'North America', 'Canada': 'North America',
+    'Germany': 'EU', 'France': 'EU', 'Netherlands': 'EU', 'Ireland': 'EU',
+    'United Kingdom': 'Europe', 'Switzerland': 'Europe',
+    'Singapore': 'APAC', 'Japan': 'APAC', 'South Korea': 'APAC', 'China': 'APAC', 'Australia': 'APAC', 'India': 'APAC',
+    'UAE': 'MEA',
+    'Brazil': 'LATAM',
+  };
+
+  const region = regionMap[country] || 'Global';
+
+  return { headquarters: headquarters || (country ? country : 'Remote'), country, region };
+};
+
+// Determine primary industry from text
+const determineIndustry = (text: string): string => {
+  const lower = text.toLowerCase();
+  const industries: [string, RegExp][] = [
+    ['Digital Assets', /digital asset|tokenization|tokenized/],
+    ['Stablecoins', /stablecoin/],
+    ['Payments', /payment|remittance|money transfer/],
+    ['DeFi', /\bdefi\b|decentralized finance/],
+    ['Crypto Infrastructure', /blockchain infrastructure|node|validator|protocol/],
+    ['Banking', /\bbank(?:ing)?\b/],
+    ['Custody', /\bcustody\b/],
+    ['Venture Capital', /venture capital|\bvc\b|investment fund/],
+    ['Consulting', /consult|advisory/],
+    ['Technology', /technology|software|platform/],
+    ['Financial Services', /financial|fintech/],
+  ];
+
+  for (const [ind, pat] of industries) {
+    if (pat.test(lower)) return ind;
+  }
+  return 'Technology';
+};
+
+// Extract funding information from text
+const extractFundingFromText = (text: string): {
+  totalRaised?: string;
+  lastRound?: string;
+  valuation?: string;
+  investors: string[];
+  lastRoundDate?: string;
+} | null => {
+  const fundingMatch = text.match(/raised\s+\$?([\d,.]+\s*(?:million|billion|[MBK]))/i);
+  const roundMatch = text.match(/Series\s+([A-F])\b/i) || text.match(/(Seed|Pre-Seed|Series [A-F]|IPO)\b/i);
+  const valuationMatch = text.match(/valued?\s+(?:at\s+)?\$?([\d,.]+\s*(?:million|billion|[MBK]))/i);
+
+  if (!fundingMatch && !roundMatch && !valuationMatch) return null;
+
+  const formatAmount = (raw: string): string => {
+    const cleaned = raw.replace(/,/g, '').trim();
+    return `$${cleaned.charAt(0).toUpperCase() + cleaned.slice(1).toLowerCase()}`;
+  };
+
+  return {
+    totalRaised: fundingMatch ? formatAmount(fundingMatch[1]) : undefined,
+    lastRound: roundMatch ? roundMatch[1] : undefined,
+    valuation: valuationMatch ? formatAmount(valuationMatch[1]) : undefined,
+    investors: [],
+  };
+};
+
+// Extract partner references from text
+const extractPartnersFromSearch = (results: SearchResult[], companyName: string): Partner[] => {
+  const partners: Partner[] = [];
+  const seen = new Set<string>();
+  const companyLower = companyName.toLowerCase();
+
+  const partnerPatterns = [
+    /(?:partner(?:ship|ed|s)?|collaborat(?:es?|ion|ing)|integrat(?:es?|ion|ing)|teamed up) with ([A-Z][A-Za-z0-9&\s]+?)(?:\s+to\b|\s+for\b|\s+on\b|[,.])/g,
+    /([A-Z][A-Za-z0-9&\s]+?) (?:partner(?:ship|ed|s)?|collaborat(?:es?|ion)|integrat(?:es?|ion)) with/g,
+  ];
+
+  const allText = results.map(r => `${r.title} ${r.snippet}`).join('\n');
+
+  for (const pattern of partnerPatterns) {
+    let match;
+    while ((match = pattern.exec(allText)) !== null) {
+      const name = match[1].trim().replace(/\s+/g, ' ');
+      const nameLower = name.toLowerCase();
+      if (
+        name.length > 2 &&
+        name.length < 50 &&
+        !seen.has(nameLower) &&
+        nameLower !== companyLower &&
+        !/^(the|a|an|this|that|their|its|our|new|more|also)$/i.test(name)
+      ) {
+        seen.add(nameLower);
+        partners.push({
+          name,
+          type: 'CryptoNative',
+          description: `Partnership identified via web search`,
+        });
+      }
+    }
+  }
+
+  return partners.slice(0, 10);
+};
+
+// Extract likely company names from a text block
+const extractCompanyNamesFromText = (text: string, excludeNames: Set<string>): string[] => {
+  // Match capitalized multi-word sequences that look like company names
+  const namePattern = /\b([A-Z][a-zA-Z0-9]+(?:\s+[A-Z][a-zA-Z0-9]+){0,3})\b/g;
+  const names = new Set<string>();
+  const commonWords = new Set([
+    'The', 'A', 'An', 'In', 'On', 'At', 'For', 'By', 'To', 'Of', 'And', 'Or', 'But',
+    'With', 'From', 'Has', 'Is', 'Was', 'Are', 'Were', 'Not', 'Its', 'Our', 'Your',
+    'New', 'More', 'Most', 'All', 'Also', 'Just', 'About', 'After', 'Before', 'Over',
+    'Under', 'Between', 'Through', 'During', 'Into', 'Other', 'Their', 'This', 'That',
+    'These', 'Those', 'What', 'Which', 'Who', 'How', 'Why', 'When', 'Where', 'Some',
+    'Many', 'Each', 'Every', 'Both', 'Few', 'Several', 'Much', 'Such', 'Only',
+    'Series', 'Series A', 'Series B', 'Series C', 'Series D',
+    'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
+    'September', 'October', 'November', 'December',
+    'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday',
+    'CEO', 'CTO', 'CFO', 'COO', 'VP', 'President', 'Director', 'Manager',
+    'Read More', 'Learn More', 'Click Here', 'View All', 'See More',
+    'North America', 'South America', 'United States', 'United Kingdom',
+  ]);
+
+  let match;
+  while ((match = namePattern.exec(text)) !== null) {
+    const name = match[1].trim();
+    if (
+      name.length > 2 &&
+      name.length < 40 &&
+      !commonWords.has(name) &&
+      !excludeNames.has(name.toLowerCase()) &&
+      !/^\d/.test(name)
+    ) {
+      names.add(name);
+    }
+  }
+
+  return [...names];
+};
 
 // --- BUSINESS LOGIC ---
 
 export const enrichCompanyData = async (
   companyName: string
 ): Promise<Partial<Company>> => {
-  const prompt = `Find comprehensive business intelligence for "${companyName}".
-
-This company may be crypto-native, a traditional enterprise with blockchain/crypto involvement, a VC/investment firm, or a technology company that supports the digital asset ecosystem. Analyze it regardless of its primary industry — we want to understand what they do and any connections to digital assets, stablecoins, blockchain, tokenization, or Web3.
-
-I need a JSON object with these fields:
-- "description": string (2-3 sentence company overview — be SPECIFIC: name their core product/service, what differentiates them from competitors, and their unique value proposition. NEVER use generic phrases like "enterprise-grade solutions", "enabling institutions to integrate blockchain", or "secure, compliant infrastructure" — instead describe the actual product, protocol, or service they offer and what makes them distinct)
-- "categories": string[] (from: "Issuer", "Infrastructure", "Wallet", "Payments", "DeFi", "Custody", "Banks", "Central Banks", "VC", "Consultancy" — use "Central Banks" for central banks and monetary authorities like ECB, Fed, Bank of England; use "VC" for venture capital firms, crypto funds, and investment firms; use "Consultancy" for consulting firms like McKinsey, PwC, Deloitte, EY, Accenture)
-- "parentCompany": string | null (if this is a local/regional entity of a larger company, return the parent name — e.g. "PwC" for "PwC India", "Deloitte" for "Deloitte Germany". But do NOT set this for distinct business units like "Coinbase Ventures" under "Coinbase" — those are separate entities. Only use for geographic subsidiaries.)
-- "partners": array of objects with { "name": string, "type": "Fortune500Global" | "CryptoNative" | "Investor", "description": string, "date": string (YYYY-MM-DD if known), "sourceUrl": string (if known), "country": string (HQ country, e.g. "USA", "Germany", "Japan"), "region": "North America" | "Europe" | "APAC" | "LATAM" | "MEA" | "Global", "industry": string (e.g. "Financial Services", "Automotive", "Technology", "Energy", "Electronics") }
-  (use type "Investor" for VC firms, PE firms, and investment funds that have invested in the company; use "Fortune500Global" for enterprise/corporate partners; use "CryptoNative" for crypto-native company partners)
-- "website": string (official URL)
-- "headquarters": string (City, Country)
-- "country": string (country of HQ, e.g. "USA", "Germany", "Singapore", "United Kingdom")
-- "industry": string (primary industry vertical, e.g. "Digital Assets", "Payments", "Banking", "Crypto Infrastructure", "DeFi", "Cloud Services", "Venture Capital")
-- "region": "North America" | "EU" | "Europe" | "APAC" | "LATAM" | "MEA" | "Global"
-  (EU = headquartered in an EU member state such as France, Germany, Netherlands, Spain, Italy; Europe = UK, Switzerland, Norway or other non-EU European country; MEA = Middle East or Africa; North America = USA or Canada)
-- "focus": "Crypto-First" | "Crypto-Second" (Crypto-First = born as crypto/blockchain company, Crypto-Second = traditional company that added crypto/blockchain services or investments)
-- "funding": { "totalRaised": string, "lastRound": string, "valuation": string, "investors": string[], "lastRoundDate": string } (if available, otherwise omit)
-
-RETURN ONLY RAW JSON. No markdown. No explanation.`;
-
   try {
-    return await executeWithRetry('enrichCompanyData', async () => {
-      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.3);
-      const json = parseJSON(text);
+    // Search for company info + crypto relevance
+    const results = await searchWeb(
+      `"${companyName}" (stablecoin OR blockchain OR "digital asset" OR crypto OR payments OR fintech)`,
+      { num: 10 }
+    );
 
-      if (!json || typeof json !== 'object') {
-        console.warn('enrichCompanyData: Claude returned unparseable response for', companyName);
-        return {};
-      }
+    if (results.length === 0) {
+      logger.warn('search', `No search results for enrichment of ${companyName}`);
+      return {};
+    }
 
-      const mappedCategories: Category[] = [];
-      if (Array.isArray(json.categories)) {
-        json.categories.forEach((c: string) => {
-          if (typeof c !== 'string') return;
-          const up = c.toUpperCase();
-          if (up.includes('CENTRAL BANK') || up === 'CENTRAL BANKS') mappedCategories.push(Category.CENTRAL_BANKS);
-          else if (up.includes('ISSUER')) mappedCategories.push(Category.ISSUER);
-          else if (up.includes('INFRA')) mappedCategories.push(Category.INFRASTRUCTURE);
-          else if (up.includes('PAY')) mappedCategories.push(Category.PAYMENTS);
-          else if (up.includes('DEFI')) mappedCategories.push(Category.DEFI);
-          else if (up.includes('CUSTODY')) mappedCategories.push(Category.CUSTODY);
-          else if (up.includes('CONSULT')) mappedCategories.push(Category.CONSULTANCY);
-          else if (up === 'VC' || up.includes('VENTURE CAPITAL')) mappedCategories.push(Category.VC);
-          else if (up.includes('BANK')) mappedCategories.push(Category.BANKS);
-          else if (up.includes('WALLET')) mappedCategories.push(Category.WALLET);
-        });
-      }
+    // Combine all text for analysis
+    const allText = results.map(r => `${r.title} ${r.snippet}`).join('\n');
 
-      return {
-        description: typeof json.description === 'string' ? json.description : undefined,
-        website: typeof json.website === 'string' ? json.website : undefined,
-        headquarters: typeof json.headquarters === 'string' ? json.headquarters : 'Remote',
-        country: typeof json.country === 'string' ? json.country : undefined,
-        industry: typeof json.industry === 'string' ? json.industry : undefined,
-        region: json.region || 'Global',
-        focus: json.focus || 'Crypto-Second',
-        categories: mappedCategories.length > 0 ? mappedCategories : [Category.INFRASTRUCTURE],
-        partners: Array.isArray(json.partners) ? json.partners.filter((p: any) => p && typeof p.name === 'string') : [],
-        funding: json.funding || undefined,
-        parentCompany: typeof json.parentCompany === 'string' ? json.parentCompany : undefined,
-      };
-    });
+    // Extract description from top snippets
+    const descSnippets = results
+      .slice(0, 3)
+      .map(r => r.snippet)
+      .filter(s => s && s.length > 20);
+    const description = descSnippets.length > 0
+      ? descSnippets.join(' ').substring(0, 500)
+      : `${companyName} operates in the digital asset and blockchain ecosystem.`;
+
+    // Find the company's website (prefer non-Wikipedia, non-aggregator results)
+    const websiteResult = results.find(r =>
+      !r.displayLink.includes('wikipedia') &&
+      !r.displayLink.includes('crunchbase') &&
+      !r.displayLink.includes('linkedin') &&
+      !r.displayLink.includes('bloomberg') &&
+      !r.displayLink.includes('twitter') &&
+      !r.displayLink.includes('reddit') &&
+      r.title.toLowerCase().includes(companyName.toLowerCase().split(' ')[0])
+    );
+    const website = websiteResult ? `https://${websiteResult.displayLink}` : '';
+
+    // Determine categories, focus, location, industry
+    const categories = categorizeFromText(allText);
+    const focus = determineFocus(allText, companyName);
+    const { headquarters, country, region } = extractLocationFromText(allText);
+    const industry = determineIndustry(allText);
+
+    // Extract partners from search results
+    const partners = extractPartnersFromSearch(results, companyName);
+
+    // Try to extract funding info
+    const funding = extractFundingFromText(allText);
+
+    // Check for parent company pattern (e.g. "PwC India" → parent "PwC")
+    let parentCompany: string | undefined;
+    const parentPatterns = [
+      /subsidiary of ([A-Z][A-Za-z\s&]+?)(?:[,.]|\s+and\b)/i,
+      /(?:a |the )?(?:division|arm|unit|branch) of ([A-Z][A-Za-z\s&]+?)(?:[,.]|\s+and\b)/i,
+    ];
+    for (const p of parentPatterns) {
+      const m = allText.match(p);
+      if (m) { parentCompany = m[1].trim(); break; }
+    }
+
+    return {
+      description,
+      website,
+      headquarters,
+      country,
+      industry,
+      region,
+      focus,
+      categories: categories.length > 0 ? categories : [Category.INFRASTRUCTURE],
+      partners,
+      funding: funding || undefined,
+      parentCompany,
+    };
   } catch (error) {
     console.error('Enrichment failed for', companyName, ':', error);
     return {};
@@ -327,41 +405,56 @@ RETURN ONLY RAW JSON. No markdown. No explanation.`;
 };
 
 export const findJobOpenings = async (companyName: string): Promise<Job[]> => {
-  const prompt = `Based on your knowledge of "${companyName}", what types of roles do they typically hire for in these departments: Strategy, Business Development, Partnerships, Customer Success?
-
-Return a JSON array of plausible job objects based on your knowledge of the company's typical hiring patterns and publicly known career pages. Only include roles you are reasonably confident exist at this company.
-
-Each object should have:
-- "title": string
-- "department": "Strategy" | "Customer Success" | "Business Dev" | "Partnerships" | "Other"
-- "locations": string[] (e.g. ["New York, NY", "Remote"] — based on known office locations)
-- "postedDate": string (YYYY-MM-DD, use your best estimate or today's date)
-- "url": string (the company's careers page URL if known, otherwise empty string)
-- "salary": string (e.g. "$140k - $180k", only if you have reasonable knowledge of their compensation)
-
-IMPORTANT: Do NOT fabricate specific job listings. Only include roles consistent with the company's known operations and size. If you are uncertain, return an empty array [].
-RETURN ONLY RAW JSON ARRAY.`;
-
   try {
-    return await executeWithRetry('findJobOpenings', async () => {
-      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.3);
-      const json = parseJSON(text);
-      if (!Array.isArray(json)) {
-        console.warn('findJobOpenings: Claude returned non-array response for', companyName);
-        return [];
-      }
-      return json
-        .filter((j: any) => j && typeof j.title === 'string' && j.title.trim() !== '')
-        .map((j: any, idx: number) => ({
-          id: `gen-job-${Date.now()}-${idx}`,
-          title: j.title,
-          department: j.department as any,
-          locations: Array.isArray(j.locations) ? j.locations : ['Remote'],
-          postedDate: j.postedDate || new Date().toISOString().split('T')[0],
-          url: typeof j.url === 'string' ? j.url : '',
-          salary: typeof j.salary === 'string' ? j.salary : undefined,
-        }));
-    });
+    const results = await searchWeb(
+      `"${companyName}" careers jobs (blockchain OR crypto OR stablecoin OR "digital asset")`,
+      { num: 10 }
+    );
+
+    if (results.length === 0) return [];
+
+    // Map search results to job-like entries
+    return results
+      .filter(r => {
+        const lower = (r.title + ' ' + r.snippet).toLowerCase();
+        return (
+          lower.includes('job') ||
+          lower.includes('career') ||
+          lower.includes('hiring') ||
+          lower.includes('position') ||
+          lower.includes('role') ||
+          lower.includes('opening')
+        );
+      })
+      .slice(0, 8)
+      .map((r, idx) => {
+        // Try to extract job title from search result title
+        const titleClean = r.title
+          .replace(/ [-|–] .*$/, '')
+          .replace(/\s*\(.*?\)\s*/g, '')
+          .trim();
+
+        // Determine department from keywords
+        const lower = (r.title + ' ' + r.snippet).toLowerCase();
+        let department: Job['department'] = 'Other';
+        if (/strateg/i.test(lower)) department = 'Strategy';
+        else if (/customer success|support/i.test(lower)) department = 'Customer Success';
+        else if (/business dev|biz dev|sales/i.test(lower)) department = 'Business Dev';
+        else if (/partner/i.test(lower)) department = 'Partnerships';
+
+        // Try to extract location
+        const locMatch = r.snippet.match(/(?:Location|Based in|Office):\s*([^.;]+)/i);
+        const locations = locMatch ? [locMatch[1].trim()] : ['Remote'];
+
+        return {
+          id: `search-job-${Date.now()}-${idx}`,
+          title: titleClean || `${companyName} - Open Position`,
+          department,
+          locations,
+          postedDate: new Date().toISOString().split('T')[0],
+          url: r.link,
+        };
+      });
   } catch (error) {
     console.error('findJobOpenings failed for', companyName, ':', error);
     return [];
@@ -369,290 +462,207 @@ RETURN ONLY RAW JSON ARRAY.`;
 };
 
 export const analyzeJobLink = async (url: string): Promise<any> => {
-  // Try to fetch actual page content first
   const pageContent = await fetchUrlContent(url);
 
-  let prompt: string;
-
-  if (pageContent && pageContent.content.length > 100) {
-    // We have real page content — ask Claude to analyze it
-    const truncatedContent = pageContent.content.substring(0, 8000);
-    prompt = `Analyze this job listing page content extracted from ${url}:
-
----
-Page title: ${pageContent.title}
-
-Content:
-${truncatedContent}
----
-
-Extract structured information from this job listing and return a JSON object with:
-- "companyName": string (the hiring company)
-- "jobTitle": string (the position title)
-- "locations": string[] (listed locations or ["Remote"])
-- "department": "Strategy" | "Customer Success" | "Business Dev" | "Partnerships" | "Other"
-- "salary": string (if mentioned, otherwise empty string)
-- "description": string (brief summary of the role)
-- "requirements": string[] (key requirements/qualifications listed)
-- "benefits": string[] (benefits mentioned)
-- "type": "Full-time" | "Contract" | "Remote"
-
-Extract as much as you can from the actual page content.
-RETURN ONLY RAW JSON.`;
-  } else {
-    // Fallback: URL-only analysis when page fetch fails
-    prompt = `I have a job listing URL: ${url}
-
-Note: The page content could not be fetched. Instead, analyze the URL structure to infer what you can about the job listing. Many job URLs contain the company name, job title, and location in the URL path or query parameters (e.g., greenhouse.io, lever.co, linkedin.com/jobs paths often encode this information).
-
-Based on the URL pattern and your knowledge of the company (if identifiable), return a JSON object with:
-- "companyName": string (inferred from URL domain or path, or empty string if unclear)
-- "jobTitle": string (inferred from URL path if present, or empty string)
-- "locations": string[] (based on known company office locations, or ["Remote"])
-- "department": "Strategy" | "Customer Success" | "Business Dev" | "Partnerships" | "Other"
-- "salary": string (empty string — cannot determine from URL alone)
-- "description": string (brief note about what could be inferred)
-- "requirements": string[] (empty array — cannot determine from URL alone)
-- "benefits": string[] (empty array — cannot determine from URL alone)
-- "type": "Full-time" | "Contract" | "Remote"
-
-Only populate fields you can reasonably infer from the URL and your knowledge. Leave others empty.
-RETURN ONLY RAW JSON.`;
+  if (!pageContent || pageContent.content.length < 100) {
+    // URL-only inference
+    const urlParts = url.toLowerCase();
+    const companyMatch = url.match(/(?:\/\/|\.)([\w-]+)\.(?:com|io|co|org)/);
+    return {
+      companyName: companyMatch ? companyMatch[1].replace(/-/g, ' ') : '',
+      jobTitle: '',
+      locations: ['Remote'],
+      department: 'Other' as const,
+      salary: '',
+      description: `Job listing at ${url}`,
+      requirements: [],
+      benefits: [],
+      type: 'Full-time' as const,
+      _sourceMethod: 'url-inference',
+    };
   }
 
-  try {
-    return await executeWithRetry('analyzeJobLink', async () => {
-      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.3);
-      const result = parseJSON(text) || {};
-      result._sourceMethod = pageContent ? 'page-content' : 'url-inference';
-      return result;
-    });
-  } catch (error) {
-    console.error('analyzeJobLink failed:', error);
-    return {};
+  const content = pageContent.content;
+  const title = pageContent.title;
+
+  // Extract job title — usually in the page title or first heading
+  const jobTitle = title
+    .replace(/ [-|–] .*$/, '')
+    .replace(/\s*\(.*?\)\s*/g, '')
+    .trim();
+
+  // Extract company name from title or URL
+  const companyFromTitle = title.match(/[-|–]\s*(.+?)(?:\s*[-|–]|$)/);
+  const companyName = companyFromTitle ? companyFromTitle[1].trim() : '';
+
+  // Extract locations
+  const locPatterns = [
+    /(?:Location|Office|Based in|City)[\s:]+([^\n;]+)/i,
+    /(?:Remote|Hybrid|On-site)(?:\s*[-–]\s*([^\n;]+))?/i,
+  ];
+  const locations: string[] = [];
+  for (const p of locPatterns) {
+    const m = content.match(p);
+    if (m) locations.push(m[1]?.trim() || m[0].trim());
   }
+  if (locations.length === 0) locations.push('Remote');
+
+  // Determine department
+  const lower = content.toLowerCase();
+  let department: 'Strategy' | 'Customer Success' | 'Business Dev' | 'Partnerships' | 'Other' = 'Other';
+  if (/strateg/i.test(lower)) department = 'Strategy';
+  else if (/customer success|support/i.test(lower)) department = 'Customer Success';
+  else if (/business dev|biz dev|sales/i.test(lower)) department = 'Business Dev';
+  else if (/partner/i.test(lower)) department = 'Partnerships';
+
+  // Extract salary
+  const salaryMatch = content.match(/\$[\d,]+\s*[-–]\s*\$[\d,]+/);
+  const salary = salaryMatch ? salaryMatch[0] : '';
+
+  // Extract requirements (lines starting with bullets or dashes under "requirements")
+  const reqSection = content.match(/(?:requirements?|qualifications?|what you.ll need)[\s:]*\n([\s\S]*?)(?:\n\n|\n[A-Z])/i);
+  const requirements = reqSection
+    ? reqSection[1]
+        .split('\n')
+        .map(l => l.replace(/^[\s•\-*]+/, '').trim())
+        .filter(l => l.length > 10)
+        .slice(0, 10)
+    : [];
+
+  // Extract benefits
+  const benSection = content.match(/(?:benefits?|perks?|what we offer)[\s:]*\n([\s\S]*?)(?:\n\n|\n[A-Z])/i);
+  const benefits = benSection
+    ? benSection[1]
+        .split('\n')
+        .map(l => l.replace(/^[\s•\-*]+/, '').trim())
+        .filter(l => l.length > 5)
+        .slice(0, 10)
+    : [];
+
+  // Extract description (first substantial paragraph)
+  const descLines = content.split('\n').filter(l => l.trim().length > 50);
+  const description = descLines.slice(0, 3).join(' ').substring(0, 500);
+
+  // Determine type
+  let type: 'Full-time' | 'Contract' | 'Remote' = 'Full-time';
+  if (/contract/i.test(content)) type = 'Contract';
+  else if (/remote/i.test(content)) type = 'Remote';
+
+  return {
+    companyName,
+    jobTitle,
+    locations,
+    department,
+    salary,
+    description,
+    requirements,
+    benefits,
+    type,
+    _sourceMethod: 'page-content',
+  };
 };
 
 export const fetchIndustryNews = async (
   directoryCompanies: string[] = []
 ): Promise<NewsItem[]> => {
   logger.info('news', `fetchIndustryNews called with ${directoryCompanies.length} companies`);
-  // Step 1: Try to get real news from NewsAPI
-  const thirtyDaysAgo = new Date();
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-  const fromDate = thirtyDaysAgo.toISOString().split('T')[0];
 
-  const searchQuery = 'stablecoin OR "digital asset" OR "blockchain enterprise" OR CBDC OR "crypto custody"';
-  const apiArticles = await fetchNewsFromAPI(searchQuery, fromDate);
+  const results = await searchWeb(
+    'stablecoin OR "digital asset" OR "blockchain enterprise" OR CBDC OR "crypto custody" news',
+    { num: 10, dateRestrict: 'm1', sort: 'date' }
+  );
 
-  if (apiArticles.length > 0) {
-    logger.info('news', `Got ${apiArticles.length} articles from NewsAPI, mapping to companies`);
-    // We have real news — match against tracked companies
-    const companySet = directoryCompanies.map((c) => c.toLowerCase());
-
-    return apiArticles
-      .filter((a) => a.title && a.summary)
-      .map((article, idx) => {
-        const relatedCompanies = directoryCompanies.filter(
-          (company) =>
-            article.title.toLowerCase().includes(company.toLowerCase()) ||
-            article.summary.toLowerCase().includes(company.toLowerCase())
-        );
-
-        return {
-          id: `news-api-${Date.now()}-${idx}`,
-          title: article.title,
-          source: article.source || 'News',
-          date: article.date || new Date().toISOString().split('T')[0],
-          summary: article.summary,
-          url: article.url || '#',
-          relatedCompanies,
-          sourceType: 'press' as const,
-        };
-      });
-  }
-
-  // Step 2: Fallback to Claude's knowledge when NewsAPI is unavailable
-  logger.warn('news', 'NewsAPI returned 0 articles, falling back to Claude');
-  const companiesList = directoryCompanies.slice(0, 30).join(', ');
-  const prompt = `Based on your knowledge, provide notable strategic developments and milestones in the stablecoin, digital asset, and enterprise blockchain space.
-
-Focus especially on these companies if relevant: ${companiesList}
-
-Return a JSON array where each item has:
-- "title": string (headline)
-- "source": string (publication name where this was reported)
-- "date": string (YYYY-MM-DD — use the actual date of the event based on your knowledge)
-- "summary": string (2-3 sentences)
-- "relatedCompanies": string[] (company names involved)
-
-Include 8-12 items covering: major partnerships, regulatory developments, product launches, and funding rounds. Only include events you are confident actually happened — do NOT fabricate news.
-RETURN ONLY RAW JSON ARRAY.`;
-
-  try {
-    return await executeWithRetry('fetchIndustryNews', async () => {
-      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.4);
-      const json = parseJSON(text);
-      if (!Array.isArray(json)) {
-        console.warn('fetchIndustryNews: Claude returned non-array response');
-        return [];
-      }
-      return json
-        .filter((item: any) => item && typeof item.title === 'string' && typeof item.summary === 'string')
-        .map((item: any, idx: number) => ({
-          id: `gen-news-${Date.now()}-${idx}`,
-          title: item.title,
-          source: typeof item.source === 'string' ? item.source : 'Intelligence',
-          date: typeof item.date === 'string' ? item.date : new Date().toISOString().split('T')[0],
-          summary: item.summary,
-          url: typeof item.url === 'string' ? item.url : '#',
-          relatedCompanies: Array.isArray(item.relatedCompanies) ? item.relatedCompanies : [],
-          sourceType: 'press_release' as const,
-        }));
-    });
-  } catch (error: any) {
-    logger.error('news', 'fetchIndustryNews failed completely', error?.message || String(error));
+  if (results.length === 0) {
+    logger.warn('news', 'Google Search returned 0 results for industry news');
     return [];
   }
+
+  return results
+    .filter(r => r.title && r.snippet)
+    .map((result, idx) => {
+      // Match against tracked companies
+      const relatedCompanies = directoryCompanies.filter(company => {
+        const lower = (result.title + ' ' + result.snippet).toLowerCase();
+        return lower.includes(company.toLowerCase());
+      });
+
+      // Try to extract date from snippet
+      const dateMatch = result.snippet.match(/(\w+ \d{1,2},? \d{4})/);
+      const date = dateMatch
+        ? new Date(dateMatch[1]).toISOString().split('T')[0]
+        : new Date().toISOString().split('T')[0];
+
+      return {
+        id: `search-news-${Date.now()}-${idx}`,
+        title: result.title.replace(/ [-|–] .*$/, '').trim(),
+        source: result.displayLink.replace(/^www\./, ''),
+        date,
+        summary: result.snippet,
+        url: result.link,
+        relatedCompanies,
+        sourceType: 'press' as const,
+      };
+    });
 };
 
 export const scanCompanyNews = async (
   companyName: string,
   voteFeedback?: { liked: string[]; disliked: string[] }
 ): Promise<NewsItem[]> => {
-  logger.info('news', `scanCompanyNews called for "${companyName}" (feedback: ${voteFeedback ? `${voteFeedback.liked.length} liked, ${voteFeedback.disliked.length} disliked` : 'none'})`);
+  logger.info('news', `scanCompanyNews called for "${companyName}"`);
 
-  const thirtyDaysAgo = new Date();
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-  const fromDate = thirtyDaysAgo.toISOString().split('T')[0];
+  const results = await searchWeb(
+    `"${companyName}" (stablecoin OR "tokenized deposits" OR "tokenized funds" OR "tokenized assets" OR "crypto treasury" OR "digital asset" OR CBDC)`,
+    { num: 10, dateRestrict: 'm1' }
+  );
 
-  // Focused search query: stablecoin, tokenized deposits/funds, crypto treasury
-  const searchQuery = `"${companyName}" AND (stablecoin OR "tokenized deposits" OR "tokenized funds" OR "tokenized assets" OR "crypto treasury" OR "digital asset" OR CBDC)`;
-  const apiArticles = await fetchNewsFromAPI(searchQuery, fromDate);
+  if (results.length === 0) {
+    logger.warn('news', `No search results for ${companyName} news`);
+    return [];
+  }
 
-  let candidates: NewsItem[] = [];
+  let candidates = results
+    .filter(r => r.title && r.snippet)
+    .map((result, idx) => {
+      const dateMatch = result.snippet.match(/(\w+ \d{1,2},? \d{4})/);
+      const date = dateMatch
+        ? new Date(dateMatch[1]).toISOString().split('T')[0]
+        : new Date().toISOString().split('T')[0];
 
-  if (apiArticles.length > 0) {
-    logger.info('news', `Got ${apiArticles.length} articles from NewsAPI for ${companyName}`);
-    candidates = apiArticles
-      .filter((a) => a.title && a.summary)
-      .map((article, idx) => ({
+      return {
         id: `company-scan-${Date.now()}-${idx}`,
-        title: article.title,
-        source: article.source || 'News',
-        date: article.date || new Date().toISOString().split('T')[0],
-        summary: article.summary,
-        url: article.url || '#',
+        title: result.title.replace(/ [-|–] .*$/, '').trim(),
+        source: result.displayLink.replace(/^www\./, ''),
+        date,
+        summary: result.snippet,
+        url: result.link,
         relatedCompanies: [companyName],
         sourceType: 'press' as const,
-      }));
-  } else {
-    // Fallback to Claude's knowledge
-    logger.warn('news', `NewsAPI returned 0 articles for ${companyName}, falling back to Claude`);
-
-    let feedbackBlock = '';
-    if (voteFeedback && (voteFeedback.liked.length > 0 || voteFeedback.disliked.length > 0)) {
-      feedbackBlock = '\n\nUSER FEEDBACK — use this to calibrate relevance:\n';
-      if (voteFeedback.liked.length > 0) {
-        feedbackBlock += `GOOD examples (user liked these):\n${voteFeedback.liked.slice(0, 8).map(t => `  - "${t}"`).join('\n')}\n`;
-      }
-      if (voteFeedback.disliked.length > 0) {
-        feedbackBlock += `BAD examples (user rejected these — avoid similar topics):\n${voteFeedback.disliked.slice(0, 8).map(t => `  - "${t}"`).join('\n')}\n`;
-      }
-    }
-
-    const fallbackPrompt = `Based on your knowledge, provide recent notable news specifically ABOUT "${companyName}" and their direct involvement in: stablecoins, tokenized deposits, tokenized funds, tokenized assets, crypto treasury management, or CBDC initiatives.
-
-IMPORTANT FILTERS:
-- The article must be PRIMARILY about "${companyName}" — not just a passing mention
-- Topics MUST relate to: stablecoins, tokenized deposits, tokenized funds, tokenized assets, crypto treasury, or CBDC
-- EXCLUDE articles about general crypto token price recommendations, token picks, or speculative trading advice
-- EXCLUDE articles where "${companyName}" is only briefly mentioned as context for another story
-${feedbackBlock}
-Return a JSON array where each item has:
-- "title": string (headline)
-- "source": string (publication name)
-- "date": string (YYYY-MM-DD)
-- "summary": string (2-3 sentences)
-
-Include 4-8 items. Only include events you are confident actually happened.
-RETURN ONLY RAW JSON ARRAY.`;
-
-    try {
-      candidates = await executeWithRetry('scanCompanyNews', async () => {
-        const text = await callClaude(fallbackPrompt, SYSTEM_PROMPT, 0.3);
-        const json = parseJSON(text);
-        if (!Array.isArray(json)) return [];
-        return json
-          .filter((item: any) => item && typeof item.title === 'string' && typeof item.summary === 'string')
-          .map((item: any, idx: number) => ({
-            id: `company-scan-${Date.now()}-${idx}`,
-            title: item.title,
-            source: typeof item.source === 'string' ? item.source : 'Intelligence',
-            date: typeof item.date === 'string' ? item.date : new Date().toISOString().split('T')[0],
-            summary: item.summary,
-            url: '#',
-            relatedCompanies: [companyName],
-            sourceType: 'press_release' as const,
-          }));
-      });
-    } catch (error: any) {
-      logger.error('news', `scanCompanyNews fallback failed for ${companyName}`, error?.message || String(error));
-      return [];
-    }
-  }
-
-  // --- RELEVANCE FILTER: ask Claude to grade each candidate ---
-  if (candidates.length === 0) return [];
-
-  let feedbackContext = '';
-  if (voteFeedback && (voteFeedback.liked.length > 0 || voteFeedback.disliked.length > 0)) {
-    feedbackContext = '\n\nUSER FEEDBACK — past votes on similar articles:\n';
-    if (voteFeedback.liked.length > 0) {
-      feedbackContext += `LIKED: ${voteFeedback.liked.slice(0, 6).map(t => `"${t}"`).join(', ')}\n`;
-    }
-    if (voteFeedback.disliked.length > 0) {
-      feedbackContext += `DISLIKED: ${voteFeedback.disliked.slice(0, 6).map(t => `"${t}"`).join(', ')}\n`;
-    }
-  }
-
-  const articlesForReview = candidates.map((c, i) => ({
-    index: i,
-    title: c.title,
-    summary: c.summary,
-  }));
-
-  const filterPrompt = `Review these articles and determine which are truly relevant for tracking "${companyName}" in stablecoins, tokenized deposits, tokenized funds, and crypto treasury.
-
-ARTICLES:
-${JSON.stringify(articlesForReview, null, 2)}
-
-RULES:
-1. KEEP only articles where "${companyName}" is a PRIMARY subject (not a passing mention)
-2. KEEP articles about: stablecoins, tokenized deposits, tokenized funds, tokenized assets, crypto treasury management, CBDC
-3. REJECT articles that are mainly about crypto token recommendations, speculative trading tips, or generic market commentary
-4. REJECT articles where "${companyName}" is mentioned as side context for a different company's story
-${feedbackContext}
-Return a JSON array of index numbers for articles that PASS the filter.
-Example: [0, 2, 5]
-RETURN ONLY RAW JSON ARRAY.`;
-
-  try {
-    const filterResult = await executeWithRetry('scanCompanyNews-filter', async () => {
-      const text = await callClaude(filterPrompt, SYSTEM_PROMPT, 0.2);
-      return parseJSON(text);
+      };
     });
 
-    if (Array.isArray(filterResult)) {
-      const kept = new Set(filterResult.filter((i: any) => typeof i === 'number'));
-      const filtered = candidates.filter((_, i) => kept.has(i));
-      logger.info('news', `Relevance filter: ${filtered.length}/${candidates.length} articles kept for ${companyName}`);
-      return filtered;
-    }
-  } catch (error: any) {
-    logger.warn('news', `Relevance filter failed for ${companyName}, returning all candidates`, error?.message || String(error));
+  // Relevance filter: ensure company name is in title or snippet prominently
+  const companyLower = companyName.toLowerCase();
+  candidates = candidates.filter(c => {
+    const titleLower = c.title.toLowerCase();
+    const summaryLower = c.summary.toLowerCase();
+    // Must be primarily about this company
+    return titleLower.includes(companyLower) || summaryLower.includes(companyLower);
+  });
+
+  // Apply vote feedback filter if available
+  if (voteFeedback && voteFeedback.disliked.length > 0) {
+    const dislikedLower = voteFeedback.disliked.map(t => t.toLowerCase());
+    candidates = candidates.filter(c => {
+      const titleLower = c.title.toLowerCase();
+      // Reject if too similar to disliked titles
+      return !dislikedLower.some(d =>
+        titleLower.includes(d.substring(0, 30)) || d.includes(titleLower.substring(0, 30))
+      );
+    });
   }
 
+  logger.info('news', `scanCompanyNews: ${candidates.length} relevant results for ${companyName}`);
   return candidates;
 };
 
@@ -661,138 +671,57 @@ export const scanInvestorNews = async (
   portfolioCompanyNames: string[],
   voteFeedback?: { liked: string[]; disliked: string[] }
 ): Promise<NewsItem[]> => {
-  logger.info('news', `scanInvestorNews called for "${investorName}" (${portfolioCompanyNames.length} portfolio cos)`);
+  logger.info('news', `scanInvestorNews called for "${investorName}"`);
 
-  // No time limit on search — use a wide date range
-  const searchQuery = `"${investorName}" AND (investment OR funding OR "Series" OR stablecoin OR "tokenized" OR "digital asset" OR blockchain)`;
-  const apiArticles = await fetchNewsFromAPI(searchQuery);
+  const results = await searchWeb(
+    `"${investorName}" (investment OR funding OR "Series" OR stablecoin OR "tokenized" OR "digital asset" OR blockchain)`,
+    { num: 10 }
+  );
 
-  let candidates: NewsItem[] = [];
+  if (results.length === 0) {
+    logger.warn('news', `No search results for investor ${investorName} news`);
+    return [];
+  }
 
-  if (apiArticles.length > 0) {
-    logger.info('news', `Got ${apiArticles.length} articles from NewsAPI for investor ${investorName}`);
-    candidates = apiArticles
-      .filter((a) => a.title && a.summary)
-      .map((article, idx) => ({
+  let candidates = results
+    .filter(r => r.title && r.snippet)
+    .map((result, idx) => {
+      const dateMatch = result.snippet.match(/(\w+ \d{1,2},? \d{4})/);
+      const date = dateMatch
+        ? new Date(dateMatch[1]).toISOString().split('T')[0]
+        : new Date().toISOString().split('T')[0];
+
+      return {
         id: `inv-scan-${Date.now()}-${idx}`,
-        title: article.title,
-        source: article.source || 'News',
-        date: article.date || new Date().toISOString().split('T')[0],
-        summary: article.summary,
-        url: article.url || '#',
+        title: result.title.replace(/ [-|–] .*$/, '').trim(),
+        source: result.displayLink.replace(/^www\./, ''),
+        date,
+        summary: result.snippet,
+        url: result.link,
         relatedCompanies: [investorName],
         sourceType: 'press' as const,
-      }));
-  } else {
-    logger.warn('news', `NewsAPI returned 0 articles for investor ${investorName}, falling back to Claude`);
-
-    let feedbackBlock = '';
-    if (voteFeedback && (voteFeedback.liked.length > 0 || voteFeedback.disliked.length > 0)) {
-      feedbackBlock = '\n\nUSER FEEDBACK — use this to calibrate relevance:\n';
-      if (voteFeedback.liked.length > 0) {
-        feedbackBlock += `GOOD examples (user liked these):\n${voteFeedback.liked.slice(0, 8).map(t => `  - "${t}"`).join('\n')}\n`;
-      }
-      if (voteFeedback.disliked.length > 0) {
-        feedbackBlock += `BAD examples (user rejected these — avoid similar topics):\n${voteFeedback.disliked.slice(0, 8).map(t => `  - "${t}"`).join('\n')}\n`;
-      }
-    }
-
-    const portfolioContext = portfolioCompanyNames.length > 0
-      ? `\nKnown portfolio companies: ${portfolioCompanyNames.slice(0, 20).join(', ')}`
-      : '';
-
-    const fallbackPrompt = `Based on your knowledge, provide notable news about "${investorName}" and their INVESTMENTS in startups relevant to: stablecoins, tokenized deposits, tokenized funds, tokenized assets, crypto treasury, digital assets, blockchain infrastructure, and CBDC.
-
-IMPORTANT FILTERS:
-- Focus ONLY on investment activity: funding rounds led or participated in, new portfolio additions, exits
-- Include investments at ANY date — no time limit, go as far back as relevant
-- Each article must be about "${investorName}" making or managing an investment, not general market news
-- EXCLUDE general crypto market commentary, token price speculation, or trading advice
-- EXCLUDE articles where "${investorName}" is only briefly mentioned${portfolioContext}
-${feedbackBlock}
-Return a JSON array where each item has:
-- "title": string (headline)
-- "source": string (publication name)
-- "date": string (YYYY-MM-DD)
-- "summary": string (2-3 sentences focusing on the investment details)
-
-Include 6-12 items. Only include events you are confident actually happened.
-RETURN ONLY RAW JSON ARRAY.`;
-
-    try {
-      candidates = await executeWithRetry('scanInvestorNews', async () => {
-        const text = await callClaude(fallbackPrompt, SYSTEM_PROMPT, 0.3);
-        const json = parseJSON(text);
-        if (!Array.isArray(json)) return [];
-        return json
-          .filter((item: any) => item && typeof item.title === 'string' && typeof item.summary === 'string')
-          .map((item: any, idx: number) => ({
-            id: `inv-scan-${Date.now()}-${idx}`,
-            title: item.title,
-            source: typeof item.source === 'string' ? item.source : 'Intelligence',
-            date: typeof item.date === 'string' ? item.date : new Date().toISOString().split('T')[0],
-            summary: item.summary,
-            url: '#',
-            relatedCompanies: [investorName],
-            sourceType: 'press_release' as const,
-          }));
-      });
-    } catch (error: any) {
-      logger.error('news', `scanInvestorNews fallback failed for ${investorName}`, error?.message || String(error));
-      return [];
-    }
-  }
-
-  if (candidates.length === 0) return [];
-
-  // --- RELEVANCE FILTER ---
-  let feedbackContext = '';
-  if (voteFeedback && (voteFeedback.liked.length > 0 || voteFeedback.disliked.length > 0)) {
-    feedbackContext = '\n\nUSER FEEDBACK — past votes:\n';
-    if (voteFeedback.liked.length > 0) {
-      feedbackContext += `LIKED: ${voteFeedback.liked.slice(0, 6).map(t => `"${t}"`).join(', ')}\n`;
-    }
-    if (voteFeedback.disliked.length > 0) {
-      feedbackContext += `DISLIKED: ${voteFeedback.disliked.slice(0, 6).map(t => `"${t}"`).join(', ')}\n`;
-    }
-  }
-
-  const articlesForReview = candidates.map((c, i) => ({
-    index: i,
-    title: c.title,
-    summary: c.summary,
-  }));
-
-  const filterPrompt = `Review these articles and determine which are truly about "${investorName}" making investments in startups relevant to stablecoins, tokenized deposits/funds/assets, digital assets, blockchain infrastructure, or crypto treasury.
-
-ARTICLES:
-${JSON.stringify(articlesForReview, null, 2)}
-
-RULES:
-1. KEEP only articles where "${investorName}" is a PRIMARY subject making/managing an investment
-2. KEEP articles about: funding rounds, portfolio company announcements, exits, fund launches
-3. REJECT general market news, token recommendations, or speculative commentary
-4. REJECT articles where "${investorName}" is only mentioned as background context
-${feedbackContext}
-Return a JSON array of index numbers for articles that PASS the filter.
-RETURN ONLY RAW JSON ARRAY.`;
-
-  try {
-    const filterResult = await executeWithRetry('scanInvestorNews-filter', async () => {
-      const text = await callClaude(filterPrompt, SYSTEM_PROMPT, 0.2);
-      return parseJSON(text);
+      };
     });
 
-    if (Array.isArray(filterResult)) {
-      const kept = new Set(filterResult.filter((i: any) => typeof i === 'number'));
-      const filtered = candidates.filter((_, i) => kept.has(i));
-      logger.info('news', `Investor relevance filter: ${filtered.length}/${candidates.length} articles kept for ${investorName}`);
-      return filtered;
-    }
-  } catch (error: any) {
-    logger.warn('news', `Investor relevance filter failed for ${investorName}, returning all`, error?.message || String(error));
+  // Relevance filter: must mention the investor
+  const investorLower = investorName.toLowerCase();
+  candidates = candidates.filter(c => {
+    const text = (c.title + ' ' + c.summary).toLowerCase();
+    return text.includes(investorLower);
+  });
+
+  // Apply disliked feedback
+  if (voteFeedback && voteFeedback.disliked.length > 0) {
+    const dislikedLower = voteFeedback.disliked.map(t => t.toLowerCase());
+    candidates = candidates.filter(c => {
+      const titleLower = c.title.toLowerCase();
+      return !dislikedLower.some(d =>
+        titleLower.includes(d.substring(0, 30)) || d.includes(titleLower.substring(0, 30))
+      );
+    });
   }
 
+  logger.info('news', `scanInvestorNews: ${candidates.length} relevant results for ${investorName}`);
   return candidates;
 };
 
@@ -801,140 +730,106 @@ export const extractUnknownCompanyNames = async (
   articleSummary: string,
   knownCompanyNames: string[]
 ): Promise<string[]> => {
-  const knownSet = knownCompanyNames.slice(0, 200).join(', ');
-  const prompt = `Given this article, identify company or startup names mentioned that are NOT in the provided list of known companies.
+  const knownSet = new Set(knownCompanyNames.map(n => n.toLowerCase()));
+  const text = `${articleTitle} ${articleSummary}`;
+  const extracted = extractCompanyNamesFromText(text, knownSet);
 
-Focus on: crypto companies, blockchain startups, fintech companies, digital asset firms, stablecoin issuers — any company that could be an investment target or portfolio company.
-
-Article title: ${articleTitle}
-Article summary: ${articleSummary}
-
-Known companies (DO NOT include these in your answer): ${knownSet}
-
-Return a JSON array of strings — unknown company names only. If none found, return [].
-RETURN ONLY RAW JSON ARRAY.`;
-
-  try {
-    return await executeWithRetry('extractUnknownCompanyNames', async () => {
-      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.2);
-      const json = parseJSON(text);
-      if (!Array.isArray(json)) return [];
-      return json.filter((n: any) => typeof n === 'string' && n.trim().length > 0);
-    });
-  } catch (error: any) {
-    logger.error('news', 'extractUnknownCompanyNames failed', error?.message || String(error));
-    return [];
-  }
+  logger.info('news', `extractUnknownCompanyNames: found ${extracted.length} unknown names`);
+  return extracted;
 };
 
 export const scanForNewPartnerships = async (
   companyName: string,
   existingPartnerNames: string[]
 ): Promise<Partner[]> => {
-  const prompt = `Based on your knowledge, identify strategic partnerships for "${companyName}" in the digital asset, stablecoin, or blockchain space.
+  const results = await searchWeb(
+    `"${companyName}" (partnership OR collaboration OR integration OR "teamed up") (stablecoin OR blockchain OR "digital asset" OR crypto)`,
+    { num: 10, dateRestrict: 'y1' }
+  );
 
-EXCLUDE these already-known partners: ${existingPartnerNames.join(', ')}
+  if (results.length === 0) return [];
 
-Return a JSON array of partnership objects with:
-- "name": string (partner company name)
-- "type": "Fortune500Global" | "CryptoNative" | "Investor"
-- "description": string (what the partnership involves)
-- "date": string (YYYY-MM-DD of announcement, use your best knowledge)
-- "sourceUrl": string (empty string if not known)
-- "country": string (partner HQ country, e.g. "USA", "Germany", "Japan")
-- "region": "North America" | "Europe" | "APAC" | "LATAM" | "MEA" | "Global"
-- "industry": string (partner primary industry, e.g. "Financial Services", "Automotive", "Technology")
+  const existingSet = new Set(existingPartnerNames.map(n => n.toLowerCase()));
+  const partners = extractPartnersFromSearch(results, companyName);
 
-IMPORTANT: Only include partnerships you are confident actually exist. Do NOT fabricate partnerships. If you don't know of any beyond the excluded list, return an empty array [].
-RETURN ONLY RAW JSON ARRAY.`;
+  // Filter out existing partners
+  const newPartners = partners.filter(p => !existingSet.has(p.name.toLowerCase()));
 
-  try {
-    return await executeWithRetry('scanForNewPartnerships', async () => {
-      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.3);
-      const json = parseJSON(text);
-      if (!Array.isArray(json)) {
-        console.warn('scanForNewPartnerships: Claude returned non-array response for', companyName);
-        return [];
-      }
-      return json.filter((p: any) =>
-        p && typeof p.name === 'string' && typeof p.description === 'string'
-      );
-    });
-  } catch (error) {
-    console.error('scanForNewPartnerships failed for', companyName, ':', error);
-    return [];
-  }
+  logger.info('search', `scanForNewPartnerships: found ${newPartners.length} new partners for ${companyName}`);
+  return newPartners;
 };
 
 export const researchCompanyActivity = async (
   companyName: string
-): Promise<any> => {
-  const prompt = `Based on your knowledge, describe "${companyName}" and their blockchain, digital asset, CBDC, or stablecoin activities and initiatives.
+): Promise<{ summary: string; initiatives: { title: string; date: string; description: string; sourceUrl: string }[] }> => {
+  const results = await searchWeb(
+    `"${companyName}" (blockchain OR "digital asset" OR CBDC OR stablecoin OR tokenization) initiative`,
+    { num: 10, dateRestrict: 'y1' }
+  );
 
-Return a JSON object with:
-- "summary": string (1-2 paragraph overview of their blockchain strategy)
-- "initiatives": array of objects with:
-  - "title": string (name of initiative)
-  - "date": string (YYYY-MM-DD, based on your knowledge)
-  - "description": string (what it involves)
-  - "sourceUrl": string (empty string if not known)
+  if (results.length === 0) {
+    return { summary: `No recent blockchain or digital asset activity found for ${companyName}.`, initiatives: [] };
+  }
 
-Include any tokenization projects, blockchain pilots, digital currency experiments, crypto custody services, or stablecoin integrations that you are confident actually exist. Do NOT fabricate initiatives.
-RETURN ONLY RAW JSON.`;
+  // Build summary from top snippets
+  const summary = results
+    .slice(0, 3)
+    .map(r => r.snippet)
+    .join(' ')
+    .substring(0, 800);
 
-  try {
-    return await executeWithRetry('researchCompanyActivity', async () => {
-      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.4);
-      const json = parseJSON(text);
-      if (!json || typeof json !== 'object') {
-        console.warn('researchCompanyActivity: Claude returned unparseable response for', companyName);
-        return { summary: '', initiatives: [] };
-      }
+  // Map results to initiatives
+  const initiatives = results
+    .filter(r => r.snippet.length > 30)
+    .slice(0, 8)
+    .map(r => {
+      const dateMatch = r.snippet.match(/(\w+ \d{1,2},? \d{4})/);
       return {
-        summary: typeof json.summary === 'string' ? json.summary : '',
-        initiatives: Array.isArray(json.initiatives)
-          ? json.initiatives.filter((i: any) => i && typeof i.title === 'string')
-          : [],
+        title: r.title.replace(/ [-|–] .*$/, '').trim(),
+        date: dateMatch ? new Date(dateMatch[1]).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+        description: r.snippet,
+        sourceUrl: r.link,
       };
     });
-  } catch (error) {
-    console.error('researchCompanyActivity failed for', companyName, ':', error);
-    return { summary: 'Analysis unavailable.', initiatives: [] };
-  }
+
+  return { summary, initiatives };
 };
 
 export const recommendMissingCompanies = async (
   existingCompanies: string[]
 ): Promise<{ name: string; reason: string }[]> => {
-  const prompt = `You are maintaining a directory of companies in the stablecoin and digital asset infrastructure ecosystem.
+  const existingSet = new Set(existingCompanies.map(c => c.toLowerCase()));
 
-Here are the companies already tracked: ${existingCompanies.slice(0, 50).join(', ')}
+  // Search for top companies in the space
+  const results = await searchWeb(
+    'top stablecoin companies OR "digital asset infrastructure" companies OR "crypto custody" companies 2025',
+    { num: 10 }
+  );
 
-Identify 3 major companies that are MISSING from this directory and should be added.
+  if (results.length === 0) return [];
 
-Return a JSON array with:
-- "name": string (company name)
-- "reason": string (why they should be tracked — 1 sentence)
+  // Extract company names from search results
+  const allText = results.map(r => `${r.title} ${r.snippet}`).join('\n');
+  const candidates = extractCompanyNamesFromText(allText, existingSet);
 
-Focus on companies that are significant players in stablecoins, digital asset infrastructure, crypto custody, payments, or DeFi.
-RETURN ONLY RAW JSON ARRAY.`;
+  // Build recommendations from candidates we haven't tracked yet
+  const recommendations: { name: string; reason: string }[] = [];
+  for (const name of candidates) {
+    if (recommendations.length >= 3) break;
+    if (existingSet.has(name.toLowerCase())) continue;
 
-  try {
-    return await executeWithRetry('recommendMissingCompanies', async () => {
-      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.4);
-      const json = parseJSON(text);
-      if (!Array.isArray(json)) {
-        console.warn('recommendMissingCompanies: Claude returned non-array response');
-        return [];
-      }
-      return json.filter((item: any) =>
-        item && typeof item.name === 'string' && typeof item.reason === 'string'
-      );
-    });
-  } catch (error) {
-    console.error('recommendMissingCompanies failed:', error);
-    return [];
+    // Find the snippet that mentions this company for the reason
+    const relevantResult = results.find(r =>
+      r.title.includes(name) || r.snippet.includes(name)
+    );
+    const reason = relevantResult
+      ? relevantResult.snippet.substring(0, 150)
+      : `Identified as a notable company in the stablecoin and digital asset ecosystem.`;
+
+    recommendations.push({ name, reason });
   }
+
+  return recommendations;
 };
 
 export interface DiscoveredPortfolioCompany {
@@ -949,57 +844,55 @@ export const lookupInvestorPortfolio = async (
   investorName: string,
   existingCompanyNames: string[]
 ): Promise<DiscoveredPortfolioCompany[]> => {
-  const excludeList = existingCompanyNames.length > 0
-    ? `\n\nEXCLUDE these companies already in our directory: ${existingCompanyNames.join(', ')}`
-    : '';
+  const existingSet = new Set(existingCompanyNames.map(n => n.toLowerCase()));
 
-  const prompt = `You are an expert on venture capital, private equity, and investment in the Web3, crypto, and digital asset ecosystem. You have deep knowledge of fund portfolios, including smaller and regional funds.
+  // Search for investor portfolio
+  const results = await searchWeb(
+    `"${investorName}" portfolio companies investments (crypto OR blockchain OR "digital asset" OR stablecoin OR web3)`,
+    { num: 10 }
+  );
 
-I want to find ALL portfolio companies of "${investorName}" that are relevant to the broader crypto, Web3, and digital asset space. This includes but is not limited to:
-- Stablecoins and digital asset issuers
-- Blockchain infrastructure and L1/L2 protocols
-- Crypto payments and on/off ramps
-- DeFi protocols and yield platforms
-- Crypto custody and security
-- Web3 applications, NFT platforms, metaverse
-- Tokenization and RWA (real-world assets)
-- Crypto exchanges and trading platforms
-- Blockchain analytics and compliance
-- Digital identity and decentralized identity
-- DAOs and governance tooling
-- Crypto-native fintech and neobanks${excludeList}
+  if (results.length === 0) return [];
 
-First, think about what you know about "${investorName}":
-- Are they a dedicated crypto/Web3 fund, or a generalist with crypto exposure?
-- Do they have a specific Web3 or digital assets vehicle/arm?
-- What investments have been publicly announced or reported?
-
-Then return a JSON array of objects with:
-- "name": string (company name)
-- "description": string (1 sentence — what the company does in the crypto/Web3 space)
-- "category": string (one of: "Issuer", "Infrastructure", "Wallet", "Payments", "DeFi", "Custody", "Banks", "Exchange", "Analytics", "Web3", "Other")
-- "fundingStage": string (e.g. "Seed", "Pre-Seed", "Series A", "Series B", "Growth", "Unknown")
-- "investmentDate": string (YYYY-MM-DD if known, otherwise omit)
-
-Include companies even if the investment details are partial — it is better to surface a real investment with incomplete metadata than to miss it. Only omit a company if you genuinely have no basis to believe "${investorName}" invested in it.
-RETURN ONLY RAW JSON ARRAY.`;
-
-  try {
-    return await executeWithRetry('lookupInvestorPortfolio', async () => {
-      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.5);
-      const json = parseJSON(text);
-      if (!Array.isArray(json)) {
-        console.warn('lookupInvestorPortfolio: Claude returned non-array for', investorName);
-        return [];
-      }
-      return json.filter((c: any) =>
-        c && typeof c.name === 'string' && typeof c.description === 'string'
-      );
-    });
-  } catch (error) {
-    console.error('lookupInvestorPortfolio failed for', investorName, ':', error);
-    return [];
+  // Try to fetch top result page for deeper extraction
+  const topResult = results[0];
+  let pageContent = '';
+  if (topResult) {
+    const fetched = await fetchUrlContent(topResult.link);
+    if (fetched) pageContent = fetched.content;
   }
+
+  // Extract from snippets + page content
+  const allText = results.map(r => `${r.title} ${r.snippet}`).join('\n') + '\n' + pageContent;
+  const companyNames = extractCompanyNamesFromText(allText, existingSet);
+
+  // Build portfolio entries
+  const portfolio: DiscoveredPortfolioCompany[] = companyNames
+    .filter(name => !existingSet.has(name.toLowerCase()))
+    .slice(0, 20)
+    .map(name => {
+      // Find relevant context for description
+      const context = results.find(r =>
+        r.title.includes(name) || r.snippet.includes(name)
+      );
+
+      // Try to determine category from context
+      const contextText = context ? `${context.title} ${context.snippet}` : '';
+      const cats = categorizeFromText(contextText);
+      const category = cats.length > 0 ? cats[0] : 'Other';
+
+      // Try to extract funding stage
+      const stageMatch = contextText.match(/(Seed|Pre-Seed|Series [A-F]|Growth)/i);
+
+      return {
+        name,
+        description: context ? context.snippet.substring(0, 200) : `Portfolio company of ${investorName}`,
+        category,
+        fundingStage: stageMatch ? stageMatch[1] : 'Unknown',
+      };
+    });
+
+  return portfolio;
 };
 
 export const lookupInvestorPortfolioFromUrl = async (
@@ -1029,90 +922,58 @@ export const extractPortfolioFromText = async (
   existingCompanyNames: string[],
   sourceLabel?: string
 ): Promise<DiscoveredPortfolioCompany[]> => {
-  const truncated = text.length > 12000
-    ? text.substring(0, 12000) + '\n[truncated]'
-    : text;
+  const existingSet = new Set(existingCompanyNames.map(n => n.toLowerCase()));
+  const truncated = text.length > 12000 ? text.substring(0, 12000) : text;
 
-  const excludeList = existingCompanyNames.length > 0
-    ? `\n\nEXCLUDE these companies already in our directory: ${existingCompanyNames.join(', ')}`
-    : '';
+  // Extract company names
+  const companyNames = extractCompanyNamesFromText(truncated, existingSet);
 
-  const prompt = `You are analyzing content from a venture capital or investment firm${investorName ? ` ("${investorName}")` : ''} to extract their portfolio companies.
+  // Build portfolio entries
+  return companyNames
+    .filter(name => !existingSet.has(name.toLowerCase()))
+    .slice(0, 30)
+    .map(name => {
+      // Find context around the company name
+      const nameIdx = truncated.indexOf(name);
+      const contextStart = Math.max(0, nameIdx - 100);
+      const contextEnd = Math.min(truncated.length, nameIdx + name.length + 200);
+      const context = nameIdx >= 0 ? truncated.substring(contextStart, contextEnd) : '';
 
-${sourceLabel ? `Source: ${sourceLabel}\n` : ''}Content:
----
-${truncated}
----
+      const cats = categorizeFromText(context);
+      const category = cats.length > 0 ? cats[0] : 'Other';
 
-Extract ALL portfolio companies from this content that operate in or are relevant to the crypto, Web3, blockchain, digital assets, stablecoins, DeFi, or fintech space.
+      const stageMatch = context.match(/(Seed|Pre-Seed|Series [A-F]|Growth)/i);
 
-For EACH company found, determine if it's relevant to our scope (crypto/Web3/digital assets/blockchain/fintech). Include companies even if their crypto relevance isn't obvious — we want to cast a wide net and let the user decide.${excludeList}
-
-Return a JSON array of objects with:
-- "name": string (company name exactly as shown in the content)
-- "description": string (1 sentence — what the company does, based on context or your knowledge)
-- "category": string (one of: "Issuer", "Infrastructure", "Wallet", "Payments", "DeFi", "Custody", "Banks", "Exchange", "Analytics", "Web3", "Fintech", "Other")
-- "fundingStage": string (e.g. "Seed", "Pre-Seed", "Series A", "Series B", "Growth", "Unknown")
-- "investmentDate": string (YYYY-MM-DD if known, otherwise omit)
-
-If the content lists companies but none are crypto/Web3 related, return an empty array [].
-RETURN ONLY RAW JSON ARRAY.`;
-
-  try {
-    return await executeWithRetry('extractPortfolioFromText', async () => {
-      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.3);
-      const json = parseJSON(text);
-      if (!Array.isArray(json)) {
-        console.warn('extractPortfolioFromText: non-array response');
-        return [];
-      }
-      return json.filter((c: any) =>
-        c && typeof c.name === 'string' && typeof c.description === 'string'
-      );
+      return {
+        name,
+        description: context
+          ? context.replace(/\s+/g, ' ').trim().substring(0, 200)
+          : `Portfolio company${investorName ? ` of ${investorName}` : ''}`,
+        category,
+        fundingStage: stageMatch ? stageMatch[1] : 'Unknown',
+      };
     });
-  } catch (error) {
-    console.error('extractPortfolioFromText failed:', error);
-    return [];
-  }
 };
 
 export const analyzeNewsForCompanies = async (
   content: string,
   companyNames: string[]
 ): Promise<{ mentionedCompanies: string[]; summary: string }> => {
-  const truncated = content.length > 8000 ? content.substring(0, 8000) + '\n[truncated]' : content;
-  const prompt = `Analyze this article and identify which of the following companies are mentioned or directly relevant.
+  const lower = content.toLowerCase();
 
-COMPANIES TO CHECK:
-${companyNames.join(', ')}
+  // Simple text matching — check if each company name appears in the content
+  const mentionedCompanies = companyNames.filter(name =>
+    lower.includes(name.toLowerCase())
+  );
 
-ARTICLE CONTENT:
-${truncated}
+  // Build summary from first substantial sentences
+  const sentences = content
+    .split(/[.!?]+/)
+    .map(s => s.trim())
+    .filter(s => s.length > 30);
+  const summary = sentences.slice(0, 2).join('. ') + '.';
 
-Return a JSON object with:
-- "mentionedCompanies": string[] (exact company names from the list above that are mentioned or directly relevant in the article — only include names from the provided list)
-- "summary": string (1-2 sentence summary of the article)
-
-RETURN ONLY RAW JSON.`;
-
-  try {
-    return await executeWithRetry('analyzeNewsForCompanies', async () => {
-      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.2);
-      const json = parseJSON(text);
-      if (!json || typeof json !== 'object') {
-        return { mentionedCompanies: [], summary: '' };
-      }
-      return {
-        mentionedCompanies: Array.isArray(json.mentionedCompanies)
-          ? json.mentionedCompanies.filter((n: any) => typeof n === 'string' && companyNames.includes(n))
-          : [],
-        summary: typeof json.summary === 'string' ? json.summary : '',
-      };
-    });
-  } catch (error) {
-    console.error('analyzeNewsForCompanies failed:', error);
-    return { mentionedCompanies: [], summary: '' };
-  }
+  return { mentionedCompanies, summary: summary.substring(0, 300) };
 };
 
 export interface NewsRelationship {
@@ -1129,44 +990,51 @@ export const analyzeNewsRelationships = async (
   mentionedCompanies: string[]
 ): Promise<NewsRelationship[]> => {
   if (mentionedCompanies.length < 2) return [];
-  const truncated = content.length > 8000 ? content.substring(0, 8000) + '\n[truncated]' : content;
-  const prompt = `Analyze this article and identify formal business relationships between the following companies.
 
-COMPANIES TO ANALYZE:
-${mentionedCompanies.join(', ')}
+  const relationships: NewsRelationship[] = [];
+  const lower = content.toLowerCase();
 
-ARTICLE CONTENT:
-${truncated}
+  // Check for relationship keywords near pairs of mentioned companies
+  const relKeywords = ['partnership', 'collaboration', 'integration', 'investment', 'acquisition', 'joint venture', 'deal', 'agreement', 'license'];
+  const hasRelSignal = relKeywords.some(k => lower.includes(k));
+  if (!hasRelSignal) return [];
 
-Return a JSON array of relationship objects. Only include pairs where the article EXPLICITLY describes a formal relationship (investment, partnership, acquisition, integration, joint venture, licensing deal). Do NOT infer or guess — only include relationships clearly stated in the article.
+  // For each pair of mentioned companies, check if they appear in the same sentence
+  for (let i = 0; i < mentionedCompanies.length; i++) {
+    for (let j = i + 1; j < mentionedCompanies.length; j++) {
+      const c1 = mentionedCompanies[i];
+      const c2 = mentionedCompanies[j];
 
-Each object must have:
-- "company1": string (exact name from the list above)
-- "company2": string (exact name from the list above)
-- "description": string (1-2 sentence description of the relationship from this article)
-- "company1PartnerType": "Fortune500Global" | "CryptoNative" | "Investor" (classify company1: Fortune500Global if it's a major global enterprise or Fortune 500 company, CryptoNative if it's a crypto/blockchain-native company, Investor if it's a VC firm, PE firm, or investment fund)
-- "company2PartnerType": "Fortune500Global" | "CryptoNative" | "Investor" (same classification for company2)
-- "date": string (YYYY-MM-DD of the announcement if mentioned, otherwise omit)
+      // Check if both appear within 200 chars of each other
+      const idx1 = lower.indexOf(c1.toLowerCase());
+      const idx2 = lower.indexOf(c2.toLowerCase());
+      if (idx1 >= 0 && idx2 >= 0 && Math.abs(idx1 - idx2) < 300) {
+        // Extract the context between them
+        const start = Math.min(idx1, idx2);
+        const end = Math.max(idx1, idx2) + Math.max(c1.length, c2.length) + 50;
+        const context = content.substring(Math.max(0, start - 30), Math.min(content.length, end));
 
-If no formal relationships are clearly stated, return an empty array [].
-RETURN ONLY RAW JSON ARRAY.`;
+        // Classify partner types based on heuristics
+        const classifyType = (name: string): 'Fortune500Global' | 'CryptoNative' | 'Investor' => {
+          const n = name.toLowerCase();
+          if (/venture|capital|fund|invest|partner/i.test(n)) return 'Investor';
+          // Check if crypto-native keywords appear near this company
+          const nameIdx = lower.indexOf(n);
+          const nearby = nameIdx >= 0 ? lower.substring(Math.max(0, nameIdx - 100), nameIdx + n.length + 100) : '';
+          if (/crypto|blockchain|defi|web3|stablecoin|token/.test(nearby)) return 'CryptoNative';
+          return 'Fortune500Global';
+        };
 
-  try {
-    return await executeWithRetry('analyzeNewsRelationships', async () => {
-      const text = await callClaude(prompt, SYSTEM_PROMPT, 0.2);
-      const json = parseJSON(text);
-      if (!Array.isArray(json)) return [];
-      return json.filter((r: any) =>
-        r &&
-        typeof r.company1 === 'string' && mentionedCompanies.includes(r.company1) &&
-        typeof r.company2 === 'string' && mentionedCompanies.includes(r.company2) &&
-        typeof r.description === 'string' &&
-        ['Fortune500Global', 'CryptoNative', 'Investor'].includes(r.company1PartnerType) &&
-        ['Fortune500Global', 'CryptoNative', 'Investor'].includes(r.company2PartnerType)
-      );
-    });
-  } catch (error) {
-    console.error('analyzeNewsRelationships failed:', error);
-    return [];
+        relationships.push({
+          company1: c1,
+          company2: c2,
+          description: context.replace(/\s+/g, ' ').trim().substring(0, 200),
+          company1PartnerType: classifyType(c1),
+          company2PartnerType: classifyType(c2),
+        });
+      }
+    }
   }
+
+  return relationships;
 };
