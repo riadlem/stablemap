@@ -21,6 +21,7 @@ interface SourceEntry {
 
 interface AdminProps {
   companies: Company[];
+  onClearNews?: () => void;
 }
 
 const TIER_COLORS: Record<string, string> = {
@@ -44,7 +45,7 @@ const SOURCE_BADGE: Record<NewsSourceType, { bg: string; text: string; label: st
 
 const ITEMS_PER_PAGE = 30;
 
-const Admin: React.FC<AdminProps> = ({ companies }) => {
+const Admin: React.FC<AdminProps> = ({ companies, onClearNews }) => {
   const [tab, setTab] = useState<'sources' | 'feed'>('sources');
   const [news, setNews] = useState<NewsItem[]>([]);
 
@@ -64,6 +65,7 @@ const Admin: React.FC<AdminProps> = ({ companies }) => {
   const [feedPage, setFeedPage] = useState(1);
   const [feedSourceFilter, setFeedSourceFilter] = useState<'all' | NewsSourceType>('all');
   const [feedSort, setFeedSort] = useState<'date' | 'company'>('date');
+  const [clearing, setClearing] = useState(false);
 
   // ---- Load config on mount ----
   useEffect(() => {
@@ -419,6 +421,21 @@ const Admin: React.FC<AdminProps> = ({ companies }) => {
               className="flex items-center gap-1.5 px-3 py-2 border border-slate-200 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50"
             >
               <ArrowUpDown size={14} /> {feedSort === 'date' ? 'By Date' : 'By Company'}
+            </button>
+
+            <button
+              onClick={async () => {
+                if (!confirm('Clear all articles from the database? News will be re-fetched on next scan.')) return;
+                setClearing(true);
+                await db.clearAllNews();
+                setNews([]);
+                onClearNews?.();
+                setClearing(false);
+              }}
+              disabled={clearing || news.length === 0}
+              className="flex items-center gap-1.5 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-sm font-bold text-red-600 hover:bg-red-100 transition-colors disabled:opacity-40 ml-auto"
+            >
+              <Trash2 size={14} /> {clearing ? 'Clearing...' : 'Clear All Articles'}
             </button>
           </div>
 

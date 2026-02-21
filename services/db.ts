@@ -733,6 +733,32 @@ export const db = {
     return { liked, disliked };
   },
 
+  // --- Clear All News ---
+
+  async clearAllNews(): Promise<void> {
+    // Clear localStorage
+    localStorage.removeItem(LS_KEYS.NEWS);
+
+    // Clear Firestore
+    if (!checkOffline() && dbInstance) {
+      try {
+        const newsCollection = collection(dbInstance, COLLECTIONS.NEWS);
+        const snapshot = await withTimeout<QuerySnapshot<DocumentData>>(getDocs(newsCollection), 15000);
+        const BATCH_SIZE = 450;
+        const docs = snapshot.docs;
+        for (let i = 0; i < docs.length; i += BATCH_SIZE) {
+          const batch = writeBatch(dbInstance);
+          docs.slice(i, i + BATCH_SIZE).forEach(d => batch.delete(d.ref));
+          await withTimeout(batch.commit(), 12000);
+        }
+        console.log(`[DB] Cleared ${docs.length} news items from Firestore.`);
+      } catch (e: any) {
+        console.warn('[DB] clearAllNews Firestore error:', e.message);
+        goOffline();
+      }
+    }
+  },
+
   // --- Source Configuration ---
 
   async getSourceConfig(): Promise<{ customSources: { domain: string; name: string; tier: string }[]; excludedDomains: string[] }> {

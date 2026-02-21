@@ -798,7 +798,7 @@ const App: React.FC = () => {
       case View.LISTS: return <CompanyLists companies={companies} />;
       case View.INVESTORS: return <Investors companies={companies} onSelectCompany={setSelectedCompany} onAddCompany={handleAddCompany} onAddCompanyWithInvestor={handleAddCompanyWithInvestor} onNavigateToVCImport={() => setCurrentView(View.VC_IMPORT)} onUpdateCompanyFunding={handleUpdateCompanyFunding} />;
       case View.VC_IMPORT: return <VCPortfolioImport companies={companies} onAddCompanyWithInvestor={handleAddCompanyWithInvestor} onBack={() => setCurrentView(View.INVESTORS)} />;
-      case View.ADMIN: return <Admin companies={companies} />;
+      case View.ADMIN: return <Admin companies={companies} onClearNews={() => setCompanies(prev => prev.map(c => c.recentNews?.length ? { ...c, recentNews: [] } : c))} />;
       case View.LOGS: return <Logs onBack={() => setCurrentView(View.DIRECTORY)} companies={companies} onRefreshFromFirestore={setCompanies} />;
       default: return <div>View not found</div>;
     }
