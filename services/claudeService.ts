@@ -257,6 +257,12 @@ const IRRELEVANT_PATTERNS = [
   /\btrading\s*signal/i, /\bbuy\s*now/i,
   /\bhow\s*to\s*buy\b.*\btoken/i, /\bwhere\s*to\s*buy/i,
   /\bcrypto\s*gambling/i, /\bcasino/i,
+  // NFT market / collections (not stablecoin-related)
+  /\bNFT\b.*\b(price|floor|mint|drop|collection|marketplace)/i,
+  /\b(price|floor|mint|drop|collection|marketplace)\b.*\bNFT\b/i,
+  /\bbored\s*ape/i, /\bcryptopunk/i, /\bayc\b/i, /\bbayc\b/i,
+  /\bdoodle(s)?\b.*\bNFT/i, /\bNFT\b.*\bdoodle(s)?\b/i,
+  /\bPFP\b.*\b(NFT|collection|price|mint)/i,
   // Generic explainer / educational content (not news)
   /\bwhat\s+is\s+(a\s+)?stablecoin/i, /\bwhat\s+are\s+stablecoins/i,
   /\bwhat\s+is\s+(a\s+)?(CBDC|tokenization|blockchain|cryptocurrency|crypto\s*wallet|DeFi|NFT)/i,
@@ -276,6 +282,7 @@ const IRRELEVANT_DOMAINS = new Set([
   'investopedia.com',
   'wikipedia.org',
   'medium.com',
+  'tradingkey.com',
 ]);
 
 /** Returns true if the title+summary indicate the article is about irrelevant topics */
