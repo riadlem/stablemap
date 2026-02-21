@@ -1354,36 +1354,65 @@ export const recommendMissingCompanies = async (
 ): Promise<{ name: string; reason: string }[]> => {
   const existingSet = new Set(existingCompanies.map(c => c.toLowerCase()));
 
-  // Search for top companies in the space
-  const results = await searchWeb(
-    'top stablecoin companies OR "digital asset infrastructure" companies OR "crypto custody" companies 2025',
-    { num: 10 }
-  );
+  // Run a few searches to get broad coverage of the space
+  const [r1, r2, r3] = await Promise.all([
+    searchWeb('top stablecoin issuers companies 2025', { num: 10 }),
+    searchWeb('crypto custody digital asset infrastructure companies 2025', { num: 10 }),
+    searchWeb('blockchain payments settlement companies notable 2025', { num: 10 }),
+  ]);
+  const allResults = [...r1, ...r2, ...r3];
+  if (allResults.length === 0) return [];
 
-  if (results.length === 0) return [];
+  // Deduplicate snippets and build context for AI
+  const seen = new Set<string>();
+  const snippets = allResults
+    .filter(r => { if (seen.has(r.link)) return false; seen.add(r.link); return true; })
+    .map(r => `• ${r.title}: ${r.snippet}`)
+    .join('\n');
 
-  // Extract company names from search results
-  const allText = results.map(r => `${r.title} ${r.snippet}`).join('\n');
-  const candidates = extractCompanyNamesFromText(allText, existingSet);
+  const existingList = existingCompanies.slice(0, 200).join(', ');
 
-  // Build recommendations from candidates we haven't tracked yet
-  const recommendations: { name: string; reason: string }[] = [];
-  for (const name of candidates) {
-    if (recommendations.length >= 3) break;
-    if (existingSet.has(name.toLowerCase())) continue;
+  const prompt = `You are a research assistant helping curate a directory of companies in the stablecoin and digital asset ecosystem (issuers, custodians, payment rails, infrastructure providers, exchanges, central banks exploring CBDCs, etc.).
 
-    // Find the snippet that mentions this company for the reason
-    const relevantResult = results.find(r =>
-      r.title.includes(name) || r.snippet.includes(name)
-    );
-    const reason = relevantResult
-      ? relevantResult.snippet.substring(0, 150)
-      : `Identified as a notable company in the stablecoin and digital asset ecosystem.`;
+ALREADY TRACKED (do NOT recommend these):
+${existingList}
 
-    recommendations.push({ name, reason });
+RECENT WEB SEARCH SNIPPETS:
+${snippets}
+
+Based on the snippets above, identify up to 5 notable companies or institutions that are NOT already tracked and would be valuable additions to this directory.
+
+Return ONLY a JSON array with this exact shape (no markdown, no explanation):
+[
+  {"name": "Company Name", "reason": "One sentence explaining why they belong in this directory."},
+  ...
+]
+
+Rules:
+- Only recommend companies explicitly mentioned in the snippets
+- Do not recommend companies already in the tracked list (case-insensitive)
+- The "name" must be the official company/institution name
+- The "reason" must be specific and based on the snippets (max 120 chars)
+- If there are no good candidates, return []`;
+
+  let raw = '';
+  try {
+    raw = await callAI(prompt);
+  } catch {
+    return [];
   }
 
-  return recommendations;
+  // Parse the JSON array from the AI response
+  try {
+    const match = raw.match(/\[[\s\S]*\]/);
+    if (!match) return [];
+    const parsed: { name: string; reason: string }[] = JSON.parse(match[0]);
+    return parsed
+      .filter(r => r.name && r.reason && !existingSet.has(r.name.toLowerCase()))
+      .slice(0, 5);
+  } catch {
+    return [];
+  }
 };
 
 export interface DiscoveredPortfolioCompany {
