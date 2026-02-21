@@ -1,7 +1,7 @@
 
 import { Company, NewsItem, NewsVote, CompanyFocus, Global500ResearchData, CompanyList as CompanyListType } from '../types';
 import { MOCK_COMPANIES, MOCK_NEWS } from '../constants';
-import { cleanSearchTitle, resolveSourceName, isIrrelevantNews } from './claudeService';
+import { cleanSearchTitle, resolveSourceName, isIrrelevantNews, resolvePartnerCompany } from './claudeService';
 import { dbInstance, isConfigured } from './firebase';
 import { 
   collection, 
@@ -801,6 +801,63 @@ export const db = {
 
     console.log(`[DB] Reprocessed news: kept ${kept.length}, removed ${removedIds.length}`);
     return { kept: kept.length, removed: removedIds.length, reprocessed: kept };
+  },
+
+  /**
+   * Reprocess all company partnerships: resolve token/product names to company names.
+   * Returns the list of companies that were modified.
+   */
+  async reprocessPartners(): Promise<{ fixed: number; companies: Company[] }> {
+    const allCompanies = await this.getCompanies();
+    let fixed = 0;
+
+    const updatedCompanies = allCompanies.map(company => {
+      if (!company.partners || company.partners.length === 0) return company;
+
+      let changed = false;
+      const seenKeys = new Set<string>();
+      const newPartners = [];
+
+      for (const p of company.partners) {
+        const resolved = resolvePartnerCompany(p.name);
+        let name = resolved.token ? resolved.name : p.name;
+        let desc = p.description || '';
+
+        if (resolved.token) {
+          changed = true;
+          // Ensure the original token is mentioned in description
+          if (desc && !desc.includes(resolved.token)) {
+            desc = `${desc} (${resolved.token})`;
+          } else if (!desc) {
+            desc = `${resolved.token} integration`;
+          }
+        }
+
+        // Deduplicate after remapping (e.g. both USDC and Circle → Circle)
+        const key = `${name.toLowerCase()}|${p.type}`;
+        if (seenKeys.has(key)) {
+          changed = true; // removing a duplicate counts as a change
+          continue;
+        }
+        seenKeys.add(key);
+
+        newPartners.push({ ...p, name, description: desc });
+      }
+
+      if (changed) {
+        fixed++;
+        return { ...company, partners: newPartners };
+      }
+      return company;
+    });
+
+    // Save modified companies
+    if (fixed > 0) {
+      const modifiedCompanies = updatedCompanies.filter((c, i) => c !== allCompanies[i]);
+      await this.saveCompanies(modifiedCompanies);
+    }
+
+    return { fixed, companies: updatedCompanies };
   },
 
   // --- Source Configuration ---

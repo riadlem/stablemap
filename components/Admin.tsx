@@ -66,7 +66,7 @@ const Admin: React.FC<AdminProps> = ({ companies, onClearNews }) => {
   const [feedSourceFilter, setFeedSourceFilter] = useState<'all' | NewsSourceType>('all');
   const [feedSort, setFeedSort] = useState<'date' | 'company'>('date');
   const [reprocessing, setReprocessing] = useState(false);
-  const [reprocessResult, setReprocessResult] = useState<{ kept: number; removed: number } | null>(null);
+  const [reprocessResult, setReprocessResult] = useState<{ kept: number; removed: number; partnersFixed?: number } | null>(null);
 
   // ---- Load config on mount ----
   useEffect(() => {
@@ -426,19 +426,20 @@ const Admin: React.FC<AdminProps> = ({ companies, onClearNews }) => {
 
             <button
               onClick={async () => {
-                if (!confirm('Reprocess all articles? This will:\n• Re-clean garbled titles\n• Fix source names\n• Remove token price, exchange review, and similar articles')) return;
+                if (!confirm('Reprocess all data? This will:\n• Re-clean garbled article titles & source names\n• Remove irrelevant articles (token price, exchange reviews, etc.)\n• Fix partnerships: resolve token/product names to company names')) return;
                 setReprocessing(true);
                 setReprocessResult(null);
-                const result = await db.reprocessNews();
-                setNews(result.reprocessed);
+                const newsResult = await db.reprocessNews();
+                setNews(newsResult.reprocessed);
+                const partnerResult = await db.reprocessPartners();
                 onClearNews?.();
-                setReprocessResult({ kept: result.kept, removed: result.removed });
+                setReprocessResult({ kept: newsResult.kept, removed: newsResult.removed, partnersFixed: partnerResult.fixed });
                 setReprocessing(false);
               }}
-              disabled={reprocessing || news.length === 0}
+              disabled={reprocessing}
               className="flex items-center gap-1.5 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-sm font-bold text-amber-700 hover:bg-amber-100 transition-colors disabled:opacity-40 ml-auto"
             >
-              <RotateCcw size={14} className={reprocessing ? 'animate-spin' : ''} /> {reprocessing ? 'Reprocessing...' : 'Reprocess Articles'}
+              <RotateCcw size={14} className={reprocessing ? 'animate-spin' : ''} /> {reprocessing ? 'Reprocessing...' : 'Reprocess All Data'}
             </button>
           </div>
 
@@ -448,7 +449,8 @@ const Admin: React.FC<AdminProps> = ({ companies, onClearNews }) => {
             {feedSearch && ` matching "${feedSearch}"`}
             {reprocessResult && (
               <span className="ml-2 text-amber-600 font-medium">
-                — Reprocessed: {reprocessResult.kept} kept, {reprocessResult.removed} removed
+                — News: {reprocessResult.kept} kept, {reprocessResult.removed} removed
+                {reprocessResult.partnersFixed != null && ` · Partnerships: ${reprocessResult.partnersFixed} companies fixed`}
               </span>
             )}
           </div>

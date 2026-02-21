@@ -159,6 +159,56 @@ export const resolveSourceName = (url: string, displayLink: string): string => {
   return '';
 };
 
+// --- TOKEN / PRODUCT → COMPANY MAPPING ---
+// Partnerships must always link to the issuing *company*, not a token or product.
+// When a partner name matches a key here, it is replaced with the company name
+// and the original token/product is mentioned in the description instead.
+
+const TOKEN_TO_COMPANY: Record<string, string> = {
+  // Stablecoins → Issuer
+  'USDC':       'Circle',
+  'USDT':       'Tether',
+  'Tether USD': 'Tether',
+  'BUSD':       'Paxos',
+  'TUSD':       'Archblock',
+  'TrueUSD':    'Archblock',
+  'DAI':        'MakerDAO',
+  'FRAX':       'Frax Finance',
+  'PYUSD':      'Paxos',
+  'PayPal USD': 'Paxos',
+  'FDUSD':      'First Digital',
+  'GUSD':       'Gemini',
+  'USDP':       'Paxos',
+  'LUSD':       'Liquity',
+  'cUSD':       'Celo',
+  'EURC':       'Circle',
+  'EURT':       'Tether',
+  'USDD':       'Tron',
+  'GHO':        'Aave',
+  'USDe':       'Ethena',
+  // Blockchain networks / protocols → Company
+  'Ethereum':   'Ethereum Foundation',
+  'Solana':     'Solana Labs',
+  'Polygon':    'Polygon Labs',
+  'Avalanche':  'Ava Labs',
+  'Arbitrum':   'Offchain Labs',
+  'Optimism':   'OP Labs',
+  'Base':       'Coinbase',
+  'Tron':       'Tron Foundation',
+  'BNB Chain':  'Binance',
+  'BSC':        'Binance',
+  'Binance Smart Chain': 'Binance',
+};
+
+/** Resolve a partner name: if it's a known token/product, return the issuing company.
+ *  Returns { name, mentionInDescription } where mentionInDescription is the original
+ *  token/product name (or empty if no mapping was applied). */
+export const resolvePartnerCompany = (rawName: string): { name: string; token: string } => {
+  const mapped = TOKEN_TO_COMPANY[rawName] || TOKEN_TO_COMPANY[rawName.toUpperCase()];
+  if (mapped) return { name: mapped, token: rawName };
+  return { name: rawName, token: '' };
+};
+
 // --- HELPERS ---
 
 /** Clean a search-result title: strip trailing site names and detect URL-like titles */
@@ -816,6 +866,14 @@ const extractPartnersFromSearch = (results: SearchResult[], companyName: string)
           .replace(/\s+(?:a|an|the|and|or|with|from|into|on|at)\s*$/i, '')
           .trim();
 
+        // Resolve token/product names to their issuing company
+        const resolved = resolvePartnerCompany(name);
+        let resolvedDesc = '';
+        if (resolved.token) {
+          resolvedDesc = resolved.token; // remember original token for description
+          name = resolved.name;
+        }
+
         const nameLower = name.toLowerCase();
         // Reject self-references: exact match OR one contains the other
         const isSelf = nameLower === companyLower ||
@@ -832,7 +890,10 @@ const extractPartnersFromSearch = (results: SearchResult[], companyName: string)
           !/\b(as a|as the|as an|will be|has been|have been|announced|entered|signed)\b/i.test(name)
         ) {
           seen.add(nameLower);
-          const description = buildPartnerDescription(result.snippet, name, companyName);
+          let description = buildPartnerDescription(result.snippet, name, companyName);
+          if (resolvedDesc && !description.includes(resolvedDesc)) {
+            description = `${description} (${resolvedDesc})`;
+          }
           partners.push({
             name,
             type: 'CryptoNative',
@@ -929,7 +990,7 @@ export const enrichCompanyData = async (
 
     try {
       const aiResponse = await callAI(
-        `Based on this information about "${companyName}":\n\n${rawContext}${existingDescRef}\n\nRespond with EXACTLY this format (three sections separated by "---"):\n\nDESCRIPTION:\nOne sentence about what ${companyName} is (core business, sector, where it is based).\n\n- Bullet point about a specific product, platform, or service\n- Bullet point about a relevant partnership, initiative, or activity\n- Bullet point about another concrete activity or achievement\n\n---\nPARTNERS:\n- PartnerName | type | short description of the relationship\n- PartnerName | type | short description of the relationship\n\n---\nWEBSITE: https://example.com\n\nRules for DESCRIPTION:\n- First line: ONE sentence, what the company does. No founder names, no CEO names, no people.${existingCompany?.description ? '\n- An EXISTING DESCRIPTION is provided above. Use it as a starting reference: keep facts that are still accurate, add any new information from the search results, and improve clarity. Do not discard valid existing details just because they are not in the new search results.' : ''}\n- Then bullet points (3-5 max) about concrete activities in stablecoin, digital asset, blockchain, tokenization, or fintech. Each bullet must be unique — no duplicate or overlapping info.\n- Do NOT mention founders, CEOs, executives, or any person by name.\n- Do NOT use markdown bold (**) or italic (*). Plain text only.\n- Do NOT repeat the company name at the start of every bullet.\n\nRules for PARTNERS:\n- List companies/organizations that ${companyName} has partnered with, integrated with, built on, or collaborates with.\n- Also list investors/backers if mentioned (use type "Investor").\n- type must be one of: Fortune500Global, CryptoNative, Investor\n- Use Fortune500Global for large traditional companies (banks, tech giants, payment networks).\n- Use CryptoNative for blockchain/crypto/DeFi companies.\n- Use Investor for VCs, funds, and backers.\n- Only the company/org name — no people, no "as a partner", no extra words.\n- Max 10 partners. Only include ones with evidence in the search results.\n- If none found, write "none"\n\nRules for WEBSITE:\n- The company's official homepage URL (not Wikipedia, not Crunchbase, not LinkedIn, not news sites). If unsure, write "unknown".`,
+        `Based on this information about "${companyName}":\n\n${rawContext}${existingDescRef}\n\nRespond with EXACTLY this format (three sections separated by "---"):\n\nDESCRIPTION:\nOne sentence about what ${companyName} is (core business, sector, where it is based).\n\n- Bullet point about a specific product, platform, or service\n- Bullet point about a relevant partnership, initiative, or activity\n- Bullet point about another concrete activity or achievement\n\n---\nPARTNERS:\n- PartnerName | type | short description of the relationship\n- PartnerName | type | short description of the relationship\n\n---\nWEBSITE: https://example.com\n\nRules for DESCRIPTION:\n- First line: ONE sentence, what the company does. No founder names, no CEO names, no people.${existingCompany?.description ? '\n- An EXISTING DESCRIPTION is provided above. Use it as a starting reference: keep facts that are still accurate, add any new information from the search results, and improve clarity. Do not discard valid existing details just because they are not in the new search results.' : ''}\n- Then bullet points (3-5 max) about concrete activities in stablecoin, digital asset, blockchain, tokenization, or fintech. Each bullet must be unique — no duplicate or overlapping info.\n- Do NOT mention founders, CEOs, executives, or any person by name.\n- Do NOT use markdown bold (**) or italic (*). Plain text only.\n- Do NOT repeat the company name at the start of every bullet.\n\nRules for PARTNERS:\n- List companies/organizations that ${companyName} has partnered with, integrated with, built on, or collaborates with.\n- Also list investors/backers if mentioned (use type "Investor").\n- type must be one of: Fortune500Global, CryptoNative, Investor\n- Use Fortune500Global for large traditional companies (banks, tech giants, payment networks).\n- Use CryptoNative for blockchain/crypto/DeFi companies.\n- Use Investor for VCs, funds, and backers.\n- CRITICAL: Always use the COMPANY/ORGANIZATION name, NEVER a token or product name. For example: use "Circle" not "USDC", use "Tether" not "USDT", use "Paxos" not "PYUSD"/"BUSD"/"USDP", use "MakerDAO" not "DAI", use "Solana Labs" not "Solana", use "Ava Labs" not "Avalanche". The token/product can be mentioned in the description.\n- Only the company/org name — no people, no "as a partner", no extra words.\n- Max 10 partners. Only include ones with evidence in the search results.\n- If none found, write "none"\n\nRules for WEBSITE:\n- The company's official homepage URL (not Wikipedia, not Crunchbase, not LinkedIn, not news sites). If unsure, write "unknown".`,
         'You extract structured company data from search results. No filler, no markdown formatting, no people names.'
       );
 
@@ -1013,7 +1074,19 @@ export const enrichCompanyData = async (
               .replace(/\s+/g, ' ')
               .trim();
             const rawType = segments[1].toLowerCase();
-            const pDesc = segments[2] || '';
+            let pDesc = segments[2] || '';
+
+            // Resolve token/product names to their issuing company
+            const resolved = resolvePartnerCompany(pName);
+            if (resolved.token) {
+              pName = resolved.name;
+              // Ensure the original token/product is mentioned in description
+              if (pDesc && !pDesc.includes(resolved.token)) {
+                pDesc = `${pDesc} (${resolved.token})`;
+              } else if (!pDesc) {
+                pDesc = `${resolved.token} integration`;
+              }
+            }
 
             // Validate and map type
             let pType: 'Fortune500Global' | 'CryptoNative' | 'Investor' = 'CryptoNative';

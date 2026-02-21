@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Company, Job, Partner, CompanyFocus, NewsItem, NewsVote, classifyNewsSourceType, NewsSourceType } from '../types';
 import { ArrowLeft, Briefcase, Handshake, ExternalLink, Share2, Sparkles, Building, MapPin, Building2, Globe, RefreshCw, Trash2, Edit2, Check, X, Newspaper, Plus, Flag, Ban, DollarSign, TrendingUp, Users, UserPlus, Tag, Search, ThumbsUp, ThumbsDown } from 'lucide-react';
-import { findJobOpenings, scanCompanyNews, formatFinancialAmount } from "../services/claudeService";
+import { findJobOpenings, scanCompanyNews, formatFinancialAmount, resolvePartnerCompany } from "../services/claudeService";
 import { db } from '../services/db';
 import { isJobRecent } from '../constants';
 import AddNewsModal from './AddNewsModal';
@@ -371,16 +371,20 @@ const CompanyDetail: React.FC<CompanyDetailProps> = ({ company, onBack, onShare,
 
   const handleAddPartner = async (name: string, type: Partner['type']) => {
     if (!name.trim()) return;
+    // Resolve token/product names to their issuing company
+    const resolved = resolvePartnerCompany(name.trim());
+    const partnerName = resolved.name;
     // Allow same name with different type (e.g. Visa as both Fortune500Global and Investor)
     const already = company.partners.some(
-      p => p.name.toLowerCase() === name.trim().toLowerCase() && p.type === type
+      p => p.name.toLowerCase() === partnerName.toLowerCase() && p.type === type
     );
     if (already) return;
-    const newPartner: Partner = {
-      name: name.trim(),
-      type,
-      description: type !== 'Investor' ? `Partnership with ${company.name}.` : '',
-    };
+    const desc = type !== 'Investor'
+      ? resolved.token
+        ? `Partnership with ${company.name} (${resolved.token}).`
+        : `Partnership with ${company.name}.`
+      : '';
+    const newPartner: Partner = { name: partnerName, type, description: desc };
     await onUpdateCompany({ ...company, partners: [...company.partners, newPartner] });
     setPartnerSearchTerm('');
     setAddingPartnerSection(null);
