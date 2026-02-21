@@ -21,7 +21,8 @@ const COLLECTIONS = {
   SYSTEM: 'system',
   GLOBAL500: 'global500_activity',
   LISTS: 'company_lists',
-  NEWS_VOTES: 'news_votes'
+  NEWS_VOTES: 'news_votes',
+  SOURCES: 'sources_config'
 };
 
 const LS_KEYS = {
@@ -30,7 +31,8 @@ const LS_KEYS = {
   SCAN: 'stablemap_lastscan',
   GLOBAL500: 'stablemap_global500',
   LISTS: 'stablemap_lists',
-  NEWS_VOTES: 'stablemap_news_votes'
+  NEWS_VOTES: 'stablemap_news_votes',
+  SOURCES: 'stablemap_sources'
 };
 
 // --- HELPERS ---
@@ -729,5 +731,40 @@ export const db = {
       if (v === 'down') disliked.push(item.title);
     }
     return { liked, disliked };
+  },
+
+  // --- Source Configuration ---
+
+  async getSourceConfig(): Promise<{ customSources: { domain: string; name: string; tier: string }[]; excludedDomains: string[] }> {
+    const defaults = { customSources: [], excludedDomains: [] };
+    try {
+      if (!checkOffline() && dbInstance) {
+        const docRef = doc(dbInstance, COLLECTIONS.SOURCES, 'config');
+        const snap = await withTimeout(getDoc(docRef), 5000);
+        if (snap.exists()) {
+          const data = snap.data();
+          localStorage.setItem(LS_KEYS.SOURCES, JSON.stringify(data));
+          return { customSources: data.customSources || [], excludedDomains: data.excludedDomains || [] };
+        }
+      }
+    } catch { /* fall through */ }
+    try {
+      const stored = localStorage.getItem(LS_KEYS.SOURCES);
+      if (stored) return JSON.parse(stored);
+    } catch { /* ignore */ }
+    return defaults;
+  },
+
+  async saveSourceConfig(config: { customSources: { domain: string; name: string; tier: string }[]; excludedDomains: string[] }): Promise<void> {
+    localStorage.setItem(LS_KEYS.SOURCES, JSON.stringify(config));
+    try {
+      if (!checkOffline() && dbInstance) {
+        const docRef = doc(dbInstance, COLLECTIONS.SOURCES, 'config');
+        await withTimeout(setDoc(docRef, sanitizeForFirestore(config)), 5000);
+      }
+    } catch (e: any) {
+      console.warn('[DB] saveSourceConfig Firestore write failed:', e.message);
+      goOffline();
+    }
   }
 };

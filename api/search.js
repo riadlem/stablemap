@@ -157,9 +157,11 @@ export default async function handler(req) {
       try {
         displayLink = new URL(uri).hostname;
       } catch {}
-      // For remaining proxy URLs, derive displayLink from the title instead
-      if (displayLink.includes('vertexaisearch')) {
-        displayLink = title.replace(/\s*[-–|:].*$/, '').trim().toLowerCase().replace(/\s+/g, '') + '.com';
+      // For remaining proxy URLs, try to extract a real domain from the snippet or give up cleanly
+      if (displayLink.includes('vertexaisearch') || !displayLink) {
+        // Look for a domain-like pattern in the snippet text (e.g. "reuters.com", "theblock.co")
+        const domainMatch = snippet.match(/\b([a-z0-9-]+\.(?:com|co|org|io|net|xyz|fr|de|uk|ch|in|sg|ae))\b/i);
+        displayLink = domainMatch ? domainMatch[1].toLowerCase() : '';
       }
 
       return { title, link: uri, snippet, displayLink, formattedUrl: uri };

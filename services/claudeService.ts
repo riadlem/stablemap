@@ -83,10 +83,23 @@ const TRUSTED_DOMAIN_SET = new Set(TRUSTED_SOURCES.map(s => s.domain));
 const DOMAIN_TO_NAME = new Map(TRUSTED_SOURCES.map(s => [s.domain, s.name]));
 
 /** Build a site: OR clause for search queries (picks a random subset to stay within query limits) */
-const buildSourceSiteClause = (count: number = 8): string => {
-  // Shuffle and pick `count` domains to keep the query reasonable
-  const shuffled = [...TRUSTED_SOURCES].sort(() => Math.random() - 0.5);
+const buildSourceSiteClause = (count: number = 8, excludedDomains: string[] = []): string => {
+  const excludeSet = new Set(excludedDomains);
+  const eligible = TRUSTED_SOURCES.filter(s => !excludeSet.has(s.domain));
+  const shuffled = eligible.sort(() => Math.random() - 0.5);
   return shuffled.slice(0, count).map(s => `site:${s.domain}`).join(' OR ');
+};
+
+/** Load excluded domains from the DB (cached in localStorage for sync access) */
+const getExcludedDomains = (): string[] => {
+  try {
+    const stored = localStorage.getItem('stablemap_sources');
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      return parsed.excludedDomains || [];
+    }
+  } catch { /* ignore */ }
+  return [];
 };
 
 /** Check if a result URL comes from a trusted publication */
@@ -99,15 +112,36 @@ const isTrustedSource = (url: string): boolean => {
 
 /** Resolve a clean source name from a URL, falling back to the raw displayLink */
 const resolveSourceName = (url: string, displayLink: string): string => {
+  // Try matching the URL hostname against trusted sources
   try {
     const host = new URL(url).hostname.replace(/^www\./, '');
-    const exact = DOMAIN_TO_NAME.get(host);
-    if (exact) return exact;
-    for (const [domain, name] of DOMAIN_TO_NAME) {
-      if (host.endsWith('.' + domain)) return name;
+    // Skip proxy URLs
+    if (!host.includes('vertexaisearch')) {
+      const exact = DOMAIN_TO_NAME.get(host);
+      if (exact) return exact;
+      for (const [domain, name] of DOMAIN_TO_NAME) {
+        if (host.endsWith('.' + domain)) return name;
+      }
+      // Use the hostname directly if it looks like a real domain
+      return host;
     }
   } catch { /* ignore */ }
-  return displayLink.replace(/^www\./, '');
+
+  // Try matching the displayLink against trusted sources
+  const cleanDisplay = displayLink.replace(/^www\./, '');
+  if (cleanDisplay) {
+    const exact = DOMAIN_TO_NAME.get(cleanDisplay);
+    if (exact) return exact;
+    for (const [domain, name] of DOMAIN_TO_NAME) {
+      if (cleanDisplay === domain || cleanDisplay.endsWith('.' + domain)) return name;
+    }
+    // Only use displayLink if it looks like a real domain (short, no spaces, has a dot)
+    if (cleanDisplay.includes('.') && cleanDisplay.length < 40 && !/\s/.test(cleanDisplay)) {
+      return cleanDisplay;
+    }
+  }
+
+  return '';
 };
 
 // --- HELPERS ---
@@ -1243,7 +1277,8 @@ export const fetchIndustryNews = async (
   logger.info('news', `fetchIndustryNews called with ${directoryCompanies.length} companies`);
 
   // Run two parallel searches: one source-targeted, one broad
-  const sourceClause = buildSourceSiteClause(8);
+  const excluded = getExcludedDomains();
+  const sourceClause = buildSourceSiteClause(8, excluded);
   const [targeted, broad] = await Promise.all([
     searchWeb(
       `(stablecoin OR "digital asset" OR CBDC OR "crypto custody" OR tokenization) (${sourceClause})`,
@@ -1311,7 +1346,8 @@ export const scanCompanyNews = async (
   logger.info('news', `scanCompanyNews called for "${companyName}"`);
 
   // Two parallel searches: trusted sources + broad
-  const sourceClause = buildSourceSiteClause(6);
+  const excluded = getExcludedDomains();
+  const sourceClause = buildSourceSiteClause(6, excluded);
   const [targeted, broad] = await Promise.all([
     searchWeb(
       `"${companyName}" (stablecoin OR "digital asset" OR CBDC OR tokenization) (${sourceClause})`,

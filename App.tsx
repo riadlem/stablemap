@@ -14,7 +14,8 @@ import {
   ScrollText,
   ListChecks,
   GitMerge,
-  TrendingUp
+  TrendingUp,
+  Settings
 } from 'lucide-react';
 import CompanyList from './components/CompanyList';
 import CompanyDetail from './components/CompanyDetail';
@@ -26,6 +27,7 @@ import CompanyLists from './components/CompanyLists';
 import Investors from './components/Investors';
 import VCPortfolioImport from './components/VCPortfolioImport';
 import ShareModal from './components/ShareModal';
+import Admin from './components/Admin';
 import { Company, Partner, NewsItem, Category, FundingInfo } from './types';
 import { enrichCompanyData, scanForNewPartnerships, recommendMissingCompanies, getCurrentModelName, fetchUrlContent, analyzeNewsForCompanies, analyzeNewsRelationships, scanAndFixCentralBanks } from "./services/claudeService";
 import { db } from './services/db';
@@ -38,6 +40,7 @@ enum View {
   LISTS = 'Lists',
   INVESTORS = 'Investors',
   VC_IMPORT = 'VCImport',
+  ADMIN = 'Admin',
   LOGS = 'Logs'
 }
 
@@ -795,6 +798,7 @@ const App: React.FC = () => {
       case View.LISTS: return <CompanyLists companies={companies} />;
       case View.INVESTORS: return <Investors companies={companies} onSelectCompany={setSelectedCompany} onAddCompany={handleAddCompany} onAddCompanyWithInvestor={handleAddCompanyWithInvestor} onNavigateToVCImport={() => setCurrentView(View.VC_IMPORT)} onUpdateCompanyFunding={handleUpdateCompanyFunding} />;
       case View.VC_IMPORT: return <VCPortfolioImport companies={companies} onAddCompanyWithInvestor={handleAddCompanyWithInvestor} onBack={() => setCurrentView(View.INVESTORS)} />;
+      case View.ADMIN: return <Admin companies={companies} />;
       case View.LOGS: return <Logs onBack={() => setCurrentView(View.DIRECTORY)} companies={companies} onRefreshFromFirestore={setCompanies} />;
       default: return <div>View not found</div>;
     }
@@ -831,6 +835,9 @@ const App: React.FC = () => {
           </button>
           <button onClick={() => { setCurrentView(View.INVESTORS); setSelectedCompany(null); }} className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg transition-colors ${currentView === View.INVESTORS ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800'}`}>
             <TrendingUp size={20} /> {isSidebarOpen && <span>Investors & VC</span>}
+          </button>
+          <button onClick={() => { setCurrentView(View.ADMIN); setSelectedCompany(null); }} className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg transition-colors ${currentView === View.ADMIN ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800'}`}>
+            <Settings size={20} /> {isSidebarOpen && <span>Admin</span>}
           </button>
           <button onClick={() => { setCurrentView(View.LOGS); setSelectedCompany(null); }} className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg transition-colors ${currentView === View.LOGS ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800'}`}>
             <ScrollText size={20} /> {isSidebarOpen && <span>System Logs</span>}
