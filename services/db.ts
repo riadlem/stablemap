@@ -1,6 +1,7 @@
 
 import { Company, NewsItem, NewsVote, CompanyFocus, Global500ResearchData, CompanyList as CompanyListType } from '../types';
 import { MOCK_COMPANIES, MOCK_NEWS } from '../constants';
+import { cleanSearchTitle, resolveSourceName, isIrrelevantNews } from './claudeService';
 import { dbInstance, isConfigured } from './firebase';
 import { 
   collection, 
@@ -733,30 +734,67 @@ export const db = {
     return { liked, disliked };
   },
 
-  // --- Clear All News ---
+  // --- Reprocess & Clean News ---
 
-  async clearAllNews(): Promise<void> {
-    // Clear localStorage
-    localStorage.removeItem(LS_KEYS.NEWS);
+  /**
+   * Reprocess all existing articles:
+   * 1. Re-clean titles using cleanSearchTitle (strip site suffixes, fix URL-like titles)
+   * 2. Re-resolve source names from URLs
+   * 3. Remove articles about token prices, token launches, exchange reviews, etc.
+   * Returns { kept, removed } counts.
+   */
+  async reprocessNews(): Promise<{ kept: number; removed: number; reprocessed: NewsItem[] }> {
+    const allNews = await this.getNews();
 
-    // Clear Firestore
-    if (!checkOffline() && dbInstance) {
+    // --- Reprocess kept articles ---
+    const kept: NewsItem[] = [];
+    const removedIds: string[] = [];
+
+    for (const item of allNews) {
+      if (isIrrelevantNews(item.title, item.summary)) {
+        removedIds.push(item.id);
+        continue;
+      }
+
+      // Re-clean title from summary if it looks like a URL or is garbled
+      const newTitle = cleanSearchTitle(item.title, item.summary);
+
+      // Re-resolve source name from URL
+      let newSource = item.source;
+      if (item.url && item.url !== '#') {
+        const resolved = resolveSourceName(item.url, '');
+        if (resolved) newSource = resolved;
+      }
+
+      kept.push({ ...item, title: newTitle, source: newSource || item.source });
+    }
+
+    // --- Delete removed articles from Firestore ---
+    if (removedIds.length > 0 && !checkOffline() && dbInstance) {
       try {
-        const newsCollection = collection(dbInstance, COLLECTIONS.NEWS);
-        const snapshot = await withTimeout<QuerySnapshot<DocumentData>>(getDocs(newsCollection), 15000);
         const BATCH_SIZE = 450;
-        const docs = snapshot.docs;
-        for (let i = 0; i < docs.length; i += BATCH_SIZE) {
+        for (let i = 0; i < removedIds.length; i += BATCH_SIZE) {
           const batch = writeBatch(dbInstance);
-          docs.slice(i, i + BATCH_SIZE).forEach(d => batch.delete(d.ref));
+          removedIds.slice(i, i + BATCH_SIZE).forEach(id => {
+            batch.delete(doc(dbInstance, COLLECTIONS.NEWS, id));
+          });
           await withTimeout(batch.commit(), 12000);
         }
-        console.log(`[DB] Cleared ${docs.length} news items from Firestore.`);
       } catch (e: any) {
-        console.warn('[DB] clearAllNews Firestore error:', e.message);
-        goOffline();
+        console.warn('[DB] reprocessNews delete error:', e.message);
       }
     }
+
+    // --- Save cleaned articles back ---
+    await this.saveNews(kept);
+
+    // Also overwrite localStorage (saveNews merges, so overwrite explicitly)
+    try {
+      localStorage.setItem(LS_KEYS.NEWS, JSON.stringify(kept));
+    } catch { /* ignore */ }
+
+    console.log(`[DB] Reprocessed news: kept ${kept.length}, removed ${removedIds.length}`);
+    return { kept: kept.length, removed: removedIds.length, reprocessed: kept };
   },
 
   // --- Source Configuration ---

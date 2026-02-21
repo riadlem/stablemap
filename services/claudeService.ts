@@ -111,7 +111,7 @@ const isTrustedSource = (url: string): boolean => {
 };
 
 /** Resolve a clean source name from a URL, falling back to the raw displayLink */
-const resolveSourceName = (url: string, displayLink: string): string => {
+export const resolveSourceName = (url: string, displayLink: string): string => {
   // Try matching the URL hostname against trusted sources
   try {
     const host = new URL(url).hostname.replace(/^www\./, '');
@@ -147,7 +147,7 @@ const resolveSourceName = (url: string, displayLink: string): string => {
 // --- HELPERS ---
 
 /** Clean a search-result title: strip trailing site names and detect URL-like titles */
-const cleanSearchTitle = (rawTitle: string, snippet: string): string => {
+export const cleanSearchTitle = (rawTitle: string, snippet: string): string => {
   // Strip trailing " - SiteName" / " | SiteName" suffixes
   let title = rawTitle.replace(/ [-|–] .*$/, '').trim();
 
@@ -165,6 +165,39 @@ const cleanSearchTitle = (rawTitle: string, snippet: string): string => {
   }
 
   return title || 'Untitled';
+};
+
+// --- IRRELEVANT ARTICLE FILTER ---
+
+/** Patterns that indicate an article is about token trading, price speculation, exchange reviews, etc. */
+const IRRELEVANT_PATTERNS = [
+  // Token price / market speculation
+  /\btoken\s*price/i, /\bprice\s*prediction/i, /\bprice\s*analysis/i,
+  /\bprice\s*surge/i, /\bprice\s*crash/i, /\bprice\s*drop/i,
+  /\bprice\s*pump/i, /\bprice\s*rally/i, /\bprice\s*target/i,
+  /\bprice\s*forecast/i, /\bbull\s*run/i, /\bbear\s*market/i,
+  /\bmoon\b.*\btoken/i, /\btoken.*\bmoon\b/i,
+  /\b(100|1000)x\b/i, /\bto the moon\b/i,
+  // Token launches / airdrops / ICO / IDO
+  /\btoken\s*launch/i, /\btoken\s*sale/i, /\btoken\s*offering/i,
+  /\bICO\b/, /\bIDO\b/, /\bIEO\b/,
+  /\bairdrop/i, /\bpresale\b/i,
+  /\bmeme\s*coin/i, /\bmemecoin/i, /\bshitcoin/i,
+  // Exchange reviews / rankings
+  /\bbest\s*(crypto\s*)?(exchange|platform|broker)/i,
+  /\bexchange\s*review/i, /\bbroker\s*review/i,
+  /\btop\s*\d+\s*(crypto\s*)?(exchange|platform|broker)/i,
+  /\bsign\s*up\s*bonus/i, /\breferral\s*(code|bonus|link)/i,
+  // Trading signals / spam
+  /\btrading\s*signal/i, /\bbuy\s*now/i,
+  /\bhow\s*to\s*buy\b.*\btoken/i, /\bwhere\s*to\s*buy/i,
+  /\bcrypto\s*gambling/i, /\bcasino/i,
+];
+
+/** Returns true if the title+summary indicate the article is about irrelevant topics */
+export const isIrrelevantNews = (title: string, summary: string): boolean => {
+  const text = `${title} ${summary}`;
+  return IRRELEVANT_PATTERNS.some(p => p.test(text));
 };
 
 // --- SEARCH RESULT TYPES ---
@@ -1314,7 +1347,7 @@ export const fetchIndustryNews = async (
 
   return merged
     .slice(0, 15)
-    .filter(r => r.title && r.snippet)
+    .filter(r => r.title && r.snippet && !isIrrelevantNews(r.title, r.snippet))
     .map((result, idx) => {
       const relatedCompanies = directoryCompanies.filter(company => {
         const lower = (result.title + ' ' + result.snippet).toLowerCase();
@@ -1381,7 +1414,7 @@ export const scanCompanyNews = async (
 
   let candidates = merged
     .slice(0, 15)
-    .filter(r => r.title && r.snippet)
+    .filter(r => r.title && r.snippet && !isIrrelevantNews(r.title, r.snippet))
     .map((result, idx) => {
       const dateMatch = result.snippet.match(/(\w+ \d{1,2},? \d{4})/);
       const date = dateMatch
@@ -1450,7 +1483,7 @@ export const scanInvestorNews = async (
   });
 
   let candidates = sorted
-    .filter(r => r.title && r.snippet)
+    .filter(r => r.title && r.snippet && !isIrrelevantNews(r.title, r.snippet))
     .map((result, idx) => {
       const dateMatch = result.snippet.match(/(\w+ \d{1,2},? \d{4})/);
       const date = dateMatch

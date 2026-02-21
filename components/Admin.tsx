@@ -65,7 +65,8 @@ const Admin: React.FC<AdminProps> = ({ companies, onClearNews }) => {
   const [feedPage, setFeedPage] = useState(1);
   const [feedSourceFilter, setFeedSourceFilter] = useState<'all' | NewsSourceType>('all');
   const [feedSort, setFeedSort] = useState<'date' | 'company'>('date');
-  const [clearing, setClearing] = useState(false);
+  const [reprocessing, setReprocessing] = useState(false);
+  const [reprocessResult, setReprocessResult] = useState<{ kept: number; removed: number } | null>(null);
 
   // ---- Load config on mount ----
   useEffect(() => {
@@ -425,17 +426,19 @@ const Admin: React.FC<AdminProps> = ({ companies, onClearNews }) => {
 
             <button
               onClick={async () => {
-                if (!confirm('Clear all articles from the database? News will be re-fetched on next scan.')) return;
-                setClearing(true);
-                await db.clearAllNews();
-                setNews([]);
+                if (!confirm('Reprocess all articles? This will:\n• Re-clean garbled titles\n• Fix source names\n• Remove token price, exchange review, and similar articles')) return;
+                setReprocessing(true);
+                setReprocessResult(null);
+                const result = await db.reprocessNews();
+                setNews(result.reprocessed);
                 onClearNews?.();
-                setClearing(false);
+                setReprocessResult({ kept: result.kept, removed: result.removed });
+                setReprocessing(false);
               }}
-              disabled={clearing || news.length === 0}
-              className="flex items-center gap-1.5 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-sm font-bold text-red-600 hover:bg-red-100 transition-colors disabled:opacity-40 ml-auto"
+              disabled={reprocessing || news.length === 0}
+              className="flex items-center gap-1.5 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-sm font-bold text-amber-700 hover:bg-amber-100 transition-colors disabled:opacity-40 ml-auto"
             >
-              <Trash2 size={14} /> {clearing ? 'Clearing...' : 'Clear All Articles'}
+              <RotateCcw size={14} className={reprocessing ? 'animate-spin' : ''} /> {reprocessing ? 'Reprocessing...' : 'Reprocess Articles'}
             </button>
           </div>
 
@@ -443,6 +446,11 @@ const Admin: React.FC<AdminProps> = ({ companies, onClearNews }) => {
           <div className="text-xs text-slate-500">
             Showing {paginatedFeed.length} of {feedItems.length} articles
             {feedSearch && ` matching "${feedSearch}"`}
+            {reprocessResult && (
+              <span className="ml-2 text-amber-600 font-medium">
+                — Reprocessed: {reprocessResult.kept} kept, {reprocessResult.removed} removed
+              </span>
+            )}
           </div>
 
           {/* Feed items */}
