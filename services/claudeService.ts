@@ -12,6 +12,104 @@ export const getCurrentModelName = (): string => {
   return 'Google Web Search';
 };
 
+// --- TRUSTED PUBLICATION SOURCES (50) ---
+// Ordered by tier. Used to build source-targeted search queries and to
+// boost / badge results that come from authoritative outlets.
+
+export const TRUSTED_SOURCES: { domain: string; name: string; tier: 'crypto' | 'institutional' | 'fintech' | 'research' | 'regulatory' | 'mainstream' | 'regional' }[] = [
+  // Tier 1 — Crypto-Native
+  { domain: 'theblock.co',           name: 'The Block',              tier: 'crypto' },
+  { domain: 'coindesk.com',          name: 'CoinDesk',               tier: 'crypto' },
+  { domain: 'blockworks.co',         name: 'Blockworks',             tier: 'crypto' },
+  { domain: 'thedefiant.io',         name: 'The Defiant',            tier: 'crypto' },
+  { domain: 'decrypt.co',            name: 'Decrypt',                tier: 'crypto' },
+  { domain: 'cointelegraph.com',     name: 'CoinTelegraph',          tier: 'crypto' },
+  { domain: 'dlnews.com',            name: 'DL News',                tier: 'crypto' },
+  { domain: 'unchainedcrypto.com',   name: 'Unchained',              tier: 'crypto' },
+  { domain: 'bitcoinmagazine.com',   name: 'Bitcoin Magazine',       tier: 'crypto' },
+  // Tier 2 — Institutional / TradFi-Crypto Bridge
+  { domain: 'bloomberg.com',         name: 'Bloomberg',              tier: 'institutional' },
+  { domain: 'reuters.com',           name: 'Reuters',                tier: 'institutional' },
+  { domain: 'ft.com',                name: 'Financial Times',        tier: 'institutional' },
+  { domain: 'wsj.com',               name: 'Wall Street Journal',    tier: 'institutional' },
+  { domain: 'theinformation.com',    name: 'The Information',        tier: 'institutional' },
+  { domain: 'nytimes.com',           name: 'New York Times',         tier: 'institutional' },
+  { domain: 'economist.com',         name: 'The Economist',          tier: 'institutional' },
+  { domain: 'cnbc.com',              name: 'CNBC',                   tier: 'institutional' },
+  { domain: 'fortune.com',           name: 'Fortune',                tier: 'institutional' },
+  { domain: 'forbes.com',            name: 'Forbes',                 tier: 'institutional' },
+  // Tier 3 — Fintech & Payments
+  { domain: 'finextra.com',          name: 'Finextra',               tier: 'fintech' },
+  { domain: 'paymentsjournal.com',   name: 'PaymentsJournal',        tier: 'fintech' },
+  { domain: 'americanbanker.com',    name: 'American Banker',        tier: 'fintech' },
+  { domain: 'ledgerinsights.com',    name: 'Ledger Insights',        tier: 'fintech' },
+  { domain: 'pymnts.com',            name: 'PYMNTS',                 tier: 'fintech' },
+  { domain: 'fintechfutures.com',    name: 'Fintech Futures',        tier: 'fintech' },
+  { domain: 'tearsheet.co',          name: 'Tearsheet',              tier: 'fintech' },
+  // Tier 4 — Tech & VC
+  { domain: 'techcrunch.com',        name: 'TechCrunch',             tier: 'mainstream' },
+  { domain: 'wired.com',             name: 'Wired',                  tier: 'mainstream' },
+  { domain: 'arstechnica.com',       name: 'Ars Technica',           tier: 'mainstream' },
+  { domain: 'theverge.com',          name: 'The Verge',              tier: 'mainstream' },
+  // Tier 5 — Research & Data
+  { domain: 'artemis.xyz',           name: 'Artemis',                tier: 'research' },
+  { domain: 'messari.io',            name: 'Messari',                tier: 'research' },
+  { domain: 'chainalysis.com',       name: 'Chainalysis',            tier: 'research' },
+  { domain: 'coingecko.com',         name: 'CoinGecko',              tier: 'research' },
+  { domain: 'defillama.com',         name: 'DefiLlama',              tier: 'research' },
+  { domain: 'dune.com',              name: 'Dune Analytics',         tier: 'research' },
+  { domain: 'rwa.xyz',               name: 'RWA.xyz',                tier: 'research' },
+  // Tier 6 — Regulatory & Policy
+  { domain: 'bis.org',               name: 'BIS',                    tier: 'regulatory' },
+  { domain: 'atlanticcouncil.org',   name: 'Atlantic Council',       tier: 'regulatory' },
+  { domain: 'imf.org',               name: 'IMF',                    tier: 'regulatory' },
+  { domain: 'worldbank.org',         name: 'World Bank',             tier: 'regulatory' },
+  // Tier 7 — European & Regional
+  { domain: 'lesechos.fr',           name: 'Les Echos',              tier: 'regional' },
+  { domain: 'agefi.com',             name: 'AGEFI',                  tier: 'regional' },
+  { domain: 'agefi.fr',              name: 'AGEFI France',           tier: 'regional' },
+  { domain: 'handelsblatt.com',      name: 'Handelsblatt',           tier: 'regional' },
+  { domain: 'finews.com',            name: 'finews',                 tier: 'regional' },
+  { domain: 'thebanker.com',         name: 'The Banker',             tier: 'regional' },
+  { domain: 'scmp.com',              name: 'South China Morning Post', tier: 'regional' },
+  { domain: 'livemint.com',          name: 'Mint (India)',           tier: 'regional' },
+  { domain: 'zawya.com',             name: 'Zawya (MENA)',           tier: 'regional' },
+];
+
+/** Domain lookup set for fast matching */
+const TRUSTED_DOMAIN_SET = new Set(TRUSTED_SOURCES.map(s => s.domain));
+
+/** Map from domain → display name for normalizing noisy displayLink values */
+const DOMAIN_TO_NAME = new Map(TRUSTED_SOURCES.map(s => [s.domain, s.name]));
+
+/** Build a site: OR clause for search queries (picks a random subset to stay within query limits) */
+const buildSourceSiteClause = (count: number = 8): string => {
+  // Shuffle and pick `count` domains to keep the query reasonable
+  const shuffled = [...TRUSTED_SOURCES].sort(() => Math.random() - 0.5);
+  return shuffled.slice(0, count).map(s => `site:${s.domain}`).join(' OR ');
+};
+
+/** Check if a result URL comes from a trusted publication */
+const isTrustedSource = (url: string): boolean => {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, '');
+    return TRUSTED_DOMAIN_SET.has(host) || [...TRUSTED_DOMAIN_SET].some(d => host.endsWith('.' + d));
+  } catch { return false; }
+};
+
+/** Resolve a clean source name from a URL, falling back to the raw displayLink */
+const resolveSourceName = (url: string, displayLink: string): string => {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, '');
+    const exact = DOMAIN_TO_NAME.get(host);
+    if (exact) return exact;
+    for (const [domain, name] of DOMAIN_TO_NAME) {
+      if (host.endsWith('.' + domain)) return name;
+    }
+  } catch { /* ignore */ }
+  return displayLink.replace(/^www\./, '');
+};
+
 // --- HELPERS ---
 
 /** Clean a search-result title: strip trailing site names and detect URL-like titles */
@@ -1144,26 +1242,50 @@ export const fetchIndustryNews = async (
 ): Promise<NewsItem[]> => {
   logger.info('news', `fetchIndustryNews called with ${directoryCompanies.length} companies`);
 
-  const results = await searchWeb(
-    'stablecoin OR "digital asset" OR "blockchain enterprise" OR CBDC OR "crypto custody" news',
-    { num: 10, dateRestrict: 'm1', sort: 'date' }
-  );
+  // Run two parallel searches: one source-targeted, one broad
+  const sourceClause = buildSourceSiteClause(8);
+  const [targeted, broad] = await Promise.all([
+    searchWeb(
+      `(stablecoin OR "digital asset" OR CBDC OR "crypto custody" OR tokenization) (${sourceClause})`,
+      { num: 10, dateRestrict: 'm1' }
+    ),
+    searchWeb(
+      'stablecoin OR "digital asset" OR "blockchain enterprise" OR CBDC OR "crypto custody" news',
+      { num: 10, dateRestrict: 'm1' }
+    ),
+  ]);
 
-  if (results.length === 0) {
+  // Merge & deduplicate (prefer trusted-source version)
+  const seen = new Set<string>();
+  const merged: SearchResult[] = [];
+  for (const r of [...targeted, ...broad]) {
+    const key = r.link;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(r);
+  }
+
+  if (merged.length === 0) {
     logger.warn('news', 'Google Search returned 0 results for industry news');
     return [];
   }
 
-  return results
+  // Sort: trusted sources first, then by position
+  merged.sort((a, b) => {
+    const aT = isTrustedSource(a.link) ? 0 : 1;
+    const bT = isTrustedSource(b.link) ? 0 : 1;
+    return aT - bT;
+  });
+
+  return merged
+    .slice(0, 15)
     .filter(r => r.title && r.snippet)
     .map((result, idx) => {
-      // Match against tracked companies
       const relatedCompanies = directoryCompanies.filter(company => {
         const lower = (result.title + ' ' + result.snippet).toLowerCase();
         return lower.includes(company.toLowerCase());
       });
 
-      // Try to extract date from snippet
       const dateMatch = result.snippet.match(/(\w+ \d{1,2},? \d{4})/);
       const date = dateMatch
         ? new Date(dateMatch[1]).toISOString().split('T')[0]
@@ -1172,7 +1294,7 @@ export const fetchIndustryNews = async (
       return {
         id: `search-news-${Date.now()}-${idx}`,
         title: cleanSearchTitle(result.title, result.snippet),
-        source: result.displayLink.replace(/^www\./, ''),
+        source: resolveSourceName(result.link, result.displayLink),
         date,
         summary: result.snippet,
         url: result.link,
@@ -1188,17 +1310,41 @@ export const scanCompanyNews = async (
 ): Promise<NewsItem[]> => {
   logger.info('news', `scanCompanyNews called for "${companyName}"`);
 
-  const results = await searchWeb(
-    `"${companyName}" (stablecoin OR "tokenized deposits" OR "tokenized funds" OR "tokenized assets" OR "crypto treasury" OR "digital asset" OR CBDC)`,
-    { num: 10, dateRestrict: 'm1' }
-  );
+  // Two parallel searches: trusted sources + broad
+  const sourceClause = buildSourceSiteClause(6);
+  const [targeted, broad] = await Promise.all([
+    searchWeb(
+      `"${companyName}" (stablecoin OR "digital asset" OR CBDC OR tokenization) (${sourceClause})`,
+      { num: 10, dateRestrict: 'm1' }
+    ),
+    searchWeb(
+      `"${companyName}" (stablecoin OR "tokenized deposits" OR "tokenized funds" OR "tokenized assets" OR "crypto treasury" OR "digital asset" OR CBDC)`,
+      { num: 10, dateRestrict: 'm1' }
+    ),
+  ]);
 
-  if (results.length === 0) {
+  // Merge & deduplicate, trusted first
+  const seen = new Set<string>();
+  const merged: SearchResult[] = [];
+  for (const r of [...targeted, ...broad]) {
+    if (seen.has(r.link)) continue;
+    seen.add(r.link);
+    merged.push(r);
+  }
+
+  if (merged.length === 0) {
     logger.warn('news', `No search results for ${companyName} news`);
     return [];
   }
 
-  let candidates = results
+  merged.sort((a, b) => {
+    const aT = isTrustedSource(a.link) ? 0 : 1;
+    const bT = isTrustedSource(b.link) ? 0 : 1;
+    return aT - bT;
+  });
+
+  let candidates = merged
+    .slice(0, 15)
     .filter(r => r.title && r.snippet)
     .map((result, idx) => {
       const dateMatch = result.snippet.match(/(\w+ \d{1,2},? \d{4})/);
@@ -1209,7 +1355,7 @@ export const scanCompanyNews = async (
       return {
         id: `company-scan-${Date.now()}-${idx}`,
         title: cleanSearchTitle(result.title, result.snippet),
-        source: result.displayLink.replace(/^www\./, ''),
+        source: resolveSourceName(result.link, result.displayLink),
         date,
         summary: result.snippet,
         url: result.link,
@@ -1260,7 +1406,14 @@ export const scanInvestorNews = async (
     return [];
   }
 
-  let candidates = results
+  // Sort trusted sources first
+  const sorted = [...results].sort((a, b) => {
+    const aT = isTrustedSource(a.link) ? 0 : 1;
+    const bT = isTrustedSource(b.link) ? 0 : 1;
+    return aT - bT;
+  });
+
+  let candidates = sorted
     .filter(r => r.title && r.snippet)
     .map((result, idx) => {
       const dateMatch = result.snippet.match(/(\w+ \d{1,2},? \d{4})/);
@@ -1271,7 +1424,7 @@ export const scanInvestorNews = async (
       return {
         id: `inv-scan-${Date.now()}-${idx}`,
         title: cleanSearchTitle(result.title, result.snippet),
-        source: result.displayLink.replace(/^www\./, ''),
+        source: resolveSourceName(result.link, result.displayLink),
         date,
         summary: result.snippet,
         url: result.link,
