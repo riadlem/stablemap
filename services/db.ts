@@ -759,11 +759,17 @@ export const db = {
       // Re-clean title from summary if it looks like a URL or is garbled
       const newTitle = cleanSearchTitle(item.title, item.summary);
 
-      // Re-resolve source name from URL
+      // Re-resolve source name from URL (converts raw domains → human labels)
       let newSource = item.source;
       if (item.url && item.url !== '#') {
         const resolved = resolveSourceName(item.url, '');
         if (resolved) newSource = resolved;
+      } else if (/^[\w.-]+\.[a-z]{2,6}(\.[a-z]{2,6})?$/i.test(newSource)) {
+        // Stored source looks like a bare domain (e.g. "tracxn.com" or "tracxn.com.com")
+        // Strip duplicate TLDs first, then convert to a label
+        const deduped = newSource.replace(/(\.[a-z]{2,6})\1$/i, '$1');
+        newSource = deduped.replace(/^www\./i, '').replace(/\.[a-z]{2,6}(\.[a-z]{2,6})?$/i, '')
+          .replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).trim() || newSource;
       }
 
       kept.push({ ...item, title: newTitle, source: newSource || item.source });

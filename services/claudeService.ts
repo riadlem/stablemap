@@ -110,6 +110,21 @@ const isTrustedSource = (url: string): boolean => {
   } catch { return false; }
 };
 
+/** Convert a raw hostname/domain into a human-readable publication name.
+ *  e.g. "tracxn.com" → "Tracxn", "tracxn.com.com" → "Tracxn",
+ *       "crypto-news.io" → "Crypto News", "ledger_insights.net" → "Ledger Insights" */
+const domainToLabel = (host: string): string => {
+  // Split into parts and take the first substantive segment (skip generic subdomains)
+  const parts = host.split('.');
+  const GENERIC = new Set(['www', 'blog', 'news', 'cdn', 'api', 'app', 'mail', 'com', 'net', 'org', 'io', 'co']);
+  const name = parts.find(p => p.length > 2 && !GENERIC.has(p)) ?? parts[0];
+  // Replace hyphens/underscores with spaces and title-case each word
+  return name
+    .replace(/[-_]/g, ' ')
+    .replace(/\b\w/g, c => c.toUpperCase())
+    .trim() || host;
+};
+
 /** Resolve a clean source name from a URL, falling back to the raw displayLink */
 export const resolveSourceName = (url: string, displayLink: string): string => {
   // Try matching the URL hostname against trusted sources
@@ -122,8 +137,8 @@ export const resolveSourceName = (url: string, displayLink: string): string => {
       for (const [domain, name] of DOMAIN_TO_NAME) {
         if (host.endsWith('.' + domain)) return name;
       }
-      // Use the hostname directly if it looks like a real domain
-      return host;
+      // Convert unknown hostname to a readable label (never return a raw domain)
+      return domainToLabel(host);
     }
   } catch { /* ignore */ }
 
@@ -135,9 +150,9 @@ export const resolveSourceName = (url: string, displayLink: string): string => {
     for (const [domain, name] of DOMAIN_TO_NAME) {
       if (cleanDisplay === domain || cleanDisplay.endsWith('.' + domain)) return name;
     }
-    // Only use displayLink if it looks like a real domain (short, no spaces, has a dot)
+    // Convert unknown displayLink domain to a readable label
     if (cleanDisplay.includes('.') && cleanDisplay.length < 40 && !/\s/.test(cleanDisplay)) {
-      return cleanDisplay;
+      return domainToLabel(cleanDisplay);
     }
   }
 
