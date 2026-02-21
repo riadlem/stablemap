@@ -542,7 +542,13 @@ const App: React.FC = () => {
             const withEnriched = current.map(c => {
               if (c.id !== company.id) return c;
               const mergedPartners = mergePartners(c.partners, enriched.partners);
-              return syncFundingInvestorsToPartners({ ...c, ...enriched, partners: mergedPartners, description: finalDescription, logoPlaceholder: logoUrl });
+              const hasRealHQ = c.headquarters && c.headquarters !== 'Pending...' && c.headquarters !== 'Remote';
+              return syncFundingInvestorsToPartners({
+                ...c, ...enriched, partners: mergedPartners, description: finalDescription, logoPlaceholder: logoUrl,
+                headquarters: hasRealHQ ? c.headquarters : (enriched.headquarters || c.headquarters),
+                country: (hasRealHQ && c.country) ? c.country : (enriched.country || c.country),
+                region: (hasRealHQ && c.region && c.region !== 'Global') ? c.region : (enriched.region || c.region),
+              });
             });
             const updated = ensureBidirectionalPartners(withEnriched);
             db.saveCompanies(updated).catch(console.error);
@@ -708,7 +714,17 @@ const App: React.FC = () => {
               logoUrl = `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=128`;
           }
           const mergedPartners = mergePartners(company.partners, enriched.partners);
-          const refreshedCompany = syncFundingInvestorsToPartners({ ...company, ...enriched, partners: mergedPartners, logoPlaceholder: logoUrl });
+          // Preserve existing location when already set — AI scan can misidentify HQ
+          const hasRealHQ = company.headquarters && company.headquarters !== 'Pending...' && company.headquarters !== 'Remote';
+          const refreshedCompany = syncFundingInvestorsToPartners({
+              ...company,
+              ...enriched,
+              headquarters: hasRealHQ ? company.headquarters : (enriched.headquarters || company.headquarters),
+              country: (hasRealHQ && company.country) ? company.country : (enriched.country || company.country),
+              region: (hasRealHQ && company.region && company.region !== 'Global') ? company.region : (enriched.region || company.region),
+              partners: mergedPartners,
+              logoPlaceholder: logoUrl,
+          });
           const newCompanies = companies.map(c => c.id === refreshedCompany.id ? refreshedCompany : c);
           const updated = ensureBidirectionalPartners(newCompanies);
           setCompanies(updated);
