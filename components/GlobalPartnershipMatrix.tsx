@@ -499,9 +499,13 @@ const GlobalPartnershipMatrix: React.FC<GlobalPartnershipMatrixProps> = ({ compa
   };
 
   const handleManualNewsAdd = async (companyName: string, news: { title: string; url: string; date: string; summary: string }) => {
+      let title = news.title;
+      if (!title && news.url) {
+          try { title = new URL(news.url).hostname.replace(/^www\./, ''); } catch { /* ignore */ }
+      }
       const newItem: NewsItem = {
           id: `manual-news-${Date.now()}`,
-          title: news.title,
+          title: title || 'Untitled',
           url: news.url,
           date: news.date,
           summary: news.summary,

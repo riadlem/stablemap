@@ -12,6 +12,29 @@ export const getCurrentModelName = (): string => {
   return 'Google Web Search';
 };
 
+// --- HELPERS ---
+
+/** Clean a search-result title: strip trailing site names and detect URL-like titles */
+const cleanSearchTitle = (rawTitle: string, snippet: string): string => {
+  // Strip trailing " - SiteName" / " | SiteName" suffixes
+  let title = rawTitle.replace(/ [-|–] .*$/, '').trim();
+
+  // Detect URL / bare-domain titles that leaked from the search API
+  const looksLikeUrl = !title
+    || /^https?:\/\//i.test(title)
+    || /^www\./i.test(title)
+    || /^[a-z0-9-]+\.[a-z]{2,}$/i.test(title)
+    || /^[a-z0-9-]+\.[a-z]{2,}\s*[-–|:]/i.test(title);
+
+  if (looksLikeUrl && snippet) {
+    // Derive title from the first sentence of the snippet
+    const end = snippet.search(/[.!?]\s/);
+    title = snippet.substring(0, Math.min(end > 10 ? end : 120, 120)).trim();
+  }
+
+  return title || 'Untitled';
+};
+
 // --- SEARCH RESULT TYPES ---
 
 interface SearchResult {
@@ -1148,7 +1171,7 @@ export const fetchIndustryNews = async (
 
       return {
         id: `search-news-${Date.now()}-${idx}`,
-        title: result.title.replace(/ [-|–] .*$/, '').trim(),
+        title: cleanSearchTitle(result.title, result.snippet),
         source: result.displayLink.replace(/^www\./, ''),
         date,
         summary: result.snippet,
@@ -1185,7 +1208,7 @@ export const scanCompanyNews = async (
 
       return {
         id: `company-scan-${Date.now()}-${idx}`,
-        title: result.title.replace(/ [-|–] .*$/, '').trim(),
+        title: cleanSearchTitle(result.title, result.snippet),
         source: result.displayLink.replace(/^www\./, ''),
         date,
         summary: result.snippet,
@@ -1247,7 +1270,7 @@ export const scanInvestorNews = async (
 
       return {
         id: `inv-scan-${Date.now()}-${idx}`,
-        title: result.title.replace(/ [-|–] .*$/, '').trim(),
+        title: cleanSearchTitle(result.title, result.snippet),
         source: result.displayLink.replace(/^www\./, ''),
         date,
         summary: result.snippet,
@@ -1339,7 +1362,7 @@ export const researchCompanyActivity = async (
     .map(r => {
       const dateMatch = r.snippet.match(/(\w+ \d{1,2},? \d{4})/);
       return {
-        title: r.title.replace(/ [-|–] .*$/, '').trim(),
+        title: cleanSearchTitle(r.title, r.snippet),
         date: dateMatch ? new Date(dateMatch[1]).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
         description: r.snippet,
         sourceUrl: r.link,

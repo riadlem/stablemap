@@ -116,7 +116,7 @@ export default async function handler(req) {
     // Build search results from grounding metadata
     const results = chunks.map((chunk, idx) => {
       let uri = chunk.web?.uri || '';
-      const title = chunk.web?.title || '';
+      let title = chunk.web?.title || '';
       const isProxy = uri.includes('vertexaisearch.cloud.google.com');
 
       // If the URI is a vertexaisearch proxy, try to match a real URL by title keywords
@@ -135,6 +135,23 @@ export default async function handler(req) {
         .filter((t) => t.length > 0);
 
       const snippet = snippetParts.join(' ').substring(0, 400) || '';
+
+      // Gemini grounding often returns just a domain name or URL as the title.
+      // Detect this and derive a real headline from the support text instead.
+      const looksLikeUrl = !title
+        || /^https?:\/\//i.test(title)
+        || /^www\./i.test(title)
+        || /^[a-z0-9-]+\.[a-z]{2,}$/i.test(title.trim())
+        || /^[a-z0-9-]+\.[a-z]{2,}\s*[-–|:]/i.test(title.trim());
+
+      if (looksLikeUrl && snippet) {
+        // Use the first sentence of the support text as the title
+        const sentenceEnd = snippet.search(/[.!?]\s|$/);
+        const derived = snippet.substring(0, Math.min(sentenceEnd > 10 ? sentenceEnd : 120, 120)).trim();
+        if (derived.length > 5) {
+          title = derived;
+        }
+      }
 
       let displayLink = '';
       try {
