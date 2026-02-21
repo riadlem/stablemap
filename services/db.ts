@@ -751,7 +751,7 @@ export const db = {
     const removedIds: string[] = [];
 
     for (const item of allNews) {
-      if (isIrrelevantNews(item.title, item.summary)) {
+      if (isIrrelevantNews(item.title, item.summary, item.url)) {
         removedIds.push(item.id);
         continue;
       }

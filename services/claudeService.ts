@@ -192,12 +192,38 @@ const IRRELEVANT_PATTERNS = [
   /\btrading\s*signal/i, /\bbuy\s*now/i,
   /\bhow\s*to\s*buy\b.*\btoken/i, /\bwhere\s*to\s*buy/i,
   /\bcrypto\s*gambling/i, /\bcasino/i,
+  // Generic explainer / educational content (not news)
+  /\bwhat\s+is\s+(a\s+)?stablecoin/i, /\bwhat\s+are\s+stablecoins/i,
+  /\bwhat\s+is\s+(a\s+)?(CBDC|tokenization|blockchain|cryptocurrency|crypto\s*wallet|DeFi|NFT)/i,
+  /\bwhat\s+are\s+(CBDCs|digital\s+assets|cryptocurrencies|crypto\s*wallets|NFTs)/i,
+  /\bstablecoin(s)?\s+explained/i, /\bblockchain\s+explained/i,
+  /\bbeginner'?s?\s+guide\s+to/i, /\bcomplete\s+guide\s+to/i,
+  /\bultimate\s+guide\s+to/i,
+  /\bhow\s+does\s+(a\s+)?(stablecoin|blockchain|CBDC|tokenization|DeFi)\s+work/i,
 ];
 
+/** Domains that publish promotional, audit-marketing, or spam content */
+const IRRELEVANT_DOMAINS = new Set([
+  'hacken.io',
+  'certik.com',
+  'slowmist.com',
+  'immunefi.com',
+  'investopedia.com',
+  'wikipedia.org',
+  'medium.com',
+]);
+
 /** Returns true if the title+summary indicate the article is about irrelevant topics */
-export const isIrrelevantNews = (title: string, summary: string): boolean => {
+export const isIrrelevantNews = (title: string, summary: string, url?: string): boolean => {
   const text = `${title} ${summary}`;
-  return IRRELEVANT_PATTERNS.some(p => p.test(text));
+  if (IRRELEVANT_PATTERNS.some(p => p.test(text))) return true;
+  if (url) {
+    try {
+      const host = new URL(url).hostname.replace(/^www\./, '');
+      if (IRRELEVANT_DOMAINS.has(host) || [...IRRELEVANT_DOMAINS].some(d => host.endsWith('.' + d))) return true;
+    } catch { /* ignore */ }
+  }
+  return false;
 };
 
 // --- SEARCH RESULT TYPES ---
@@ -1347,7 +1373,7 @@ export const fetchIndustryNews = async (
 
   return merged
     .slice(0, 15)
-    .filter(r => r.title && r.snippet && !isIrrelevantNews(r.title, r.snippet))
+    .filter(r => r.title && r.snippet && !isIrrelevantNews(r.title, r.snippet, r.link))
     .map((result, idx) => {
       const relatedCompanies = directoryCompanies.filter(company => {
         const lower = (result.title + ' ' + result.snippet).toLowerCase();
@@ -1414,7 +1440,7 @@ export const scanCompanyNews = async (
 
   let candidates = merged
     .slice(0, 15)
-    .filter(r => r.title && r.snippet && !isIrrelevantNews(r.title, r.snippet))
+    .filter(r => r.title && r.snippet && !isIrrelevantNews(r.title, r.snippet, r.link))
     .map((result, idx) => {
       const dateMatch = result.snippet.match(/(\w+ \d{1,2},? \d{4})/);
       const date = dateMatch
@@ -1483,7 +1509,7 @@ export const scanInvestorNews = async (
   });
 
   let candidates = sorted
-    .filter(r => r.title && r.snippet && !isIrrelevantNews(r.title, r.snippet))
+    .filter(r => r.title && r.snippet && !isIrrelevantNews(r.title, r.snippet, r.link))
     .map((result, idx) => {
       const dateMatch = result.snippet.match(/(\w+ \d{1,2},? \d{4})/);
       const date = dateMatch
