@@ -188,6 +188,15 @@ const App: React.FC = () => {
             }
             return { ...c, logoPlaceholder: `https://ui-avatars.com/api/?name=${encodeURIComponent(c.name)}&background=f8fafc&color=64748b&size=128` };
           }
+          // Newly added companies can arrive from Firestore with null/empty logoPlaceholder
+          // if the enrichment save failed or the doc predates the field.
+          // Generate a ui-avatars fallback so the img always has a valid src.
+          if (!c.logoPlaceholder) {
+            const fallbackLogo = c.website
+              ? `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${c.website.replace(/^https?:\/\//, '').split('/')[0]}&size=128`
+              : `https://ui-avatars.com/api/?name=${encodeURIComponent(c.name)}&background=f8fafc&color=64748b&size=128`;
+            return { ...c, logoPlaceholder: fallbackLogo };
+          }
           return c;
         });
         // Normalize: ensure funding.investors are reflected as Partner entries
@@ -530,8 +539,8 @@ const App: React.FC = () => {
         if (Object.keys(enriched).length > 0) {
           if (enriched.partners && enriched.partners.length > 0) await syncPartnershipsToNews(company.name, enriched.partners);
           
-          let logoUrl = company.logoPlaceholder;
-          if (enriched.website && (company.logoPlaceholder.includes('ui-avatars.com') || company.logoPlaceholder.includes('clearbit.com'))) {
+          let logoUrl = company.logoPlaceholder || `https://ui-avatars.com/api/?name=${encodeURIComponent(company.name)}&background=f8fafc&color=64748b&size=128`;
+          if (enriched.website && (!company.logoPlaceholder || company.logoPlaceholder.includes('ui-avatars.com') || company.logoPlaceholder.includes('clearbit.com'))) {
               const domain = enriched.website.replace(/^https?:\/\//, '').split('/')[0];
               logoUrl = `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=128`;
           }
@@ -708,8 +717,8 @@ const App: React.FC = () => {
       try {
           const enriched = await enrichCompanyData(company.name, company);
           if (enriched.partners && enriched.partners.length > 0) await syncPartnershipsToNews(company.name, enriched.partners);
-          let logoUrl = company.logoPlaceholder;
-          if (enriched.website && (company.logoPlaceholder.includes('ui-avatars.com') || company.logoPlaceholder.includes('clearbit.com'))) {
+          let logoUrl = company.logoPlaceholder || `https://ui-avatars.com/api/?name=${encodeURIComponent(company.name)}&background=f8fafc&color=64748b&size=128`;
+          if (enriched.website && (!company.logoPlaceholder || company.logoPlaceholder.includes('ui-avatars.com') || company.logoPlaceholder.includes('clearbit.com'))) {
               const domain = enriched.website.replace(/^https?:\/\//, '').split('/')[0];
               logoUrl = `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=128`;
           }
